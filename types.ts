@@ -1,4 +1,3 @@
-
 export enum AnalysisStatus {
   PENDING = 'PENDING',
   COMPLETED = 'COMPLETED',
@@ -9,6 +8,17 @@ export interface CustomIntegration {
   id: string;
   name: string;
   baseUrl: string;
+}
+
+export type LLMProvider = 'gemini' | 'openai';
+
+export interface LLMModel {
+  id: string;
+  name: string;
+  provider: LLMProvider;
+  modelName: string; // e.g., 'gemini-2.5-flash' or 'llama3-70b-8192'
+  apiUrl?: string; // e.g., 'https://api.openai.com/v1/chat/completions' or local server
+  apiKey?: string;
 }
 
 export interface LoraFileWithPreview {

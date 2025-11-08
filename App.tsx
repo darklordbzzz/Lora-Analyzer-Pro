@@ -1,7 +1,7 @@
 
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
-import { LoraAnalysis, LoraFileWithPreview, AnalysisStatus, CustomIntegration } from './types';
-import { analyzeLoraFileWithGemini } from './services/geminiService';
+import { LoraAnalysis, LoraFileWithPreview, AnalysisStatus, CustomIntegration, LLMModel } from './types';
+import { analyzeLoraFile } from './services/llmService';
 import Header from './components/Header';
 import FileUpload from './components/FileUpload';
 import AnalysisResults from './components/AnalysisResults';
@@ -9,6 +9,7 @@ import { LoaderIcon, SearchIcon } from './components/Icons';
 import SettingsModal from './components/SettingsModal';
 
 const CUSTOM_INTEGRATIONS_KEY = 'lora-analyzer-pro-custom-integrations';
+const LLM_MODELS_KEY = 'lora-analyzer-pro-llm-models';
 
 const App: React.FC = () => {
   const [loraFiles, setLoraFiles] = useState<LoraFileWithPreview[]>([]);
@@ -19,6 +20,8 @@ const App: React.FC = () => {
   const [searchCategory, setSearchCategory] = useState<'name' | 'hash' | 'tags' | 'triggerWords'>('name');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [customIntegrations, setCustomIntegrations] = useState<CustomIntegration[]>([]);
+  const [llmModels, setLlmModels] = useState<LLMModel[]>([]);
+  const [selectedLlmModelId, setSelectedLlmModelId] = useState<string>('');
   const analysisCancelledRef = useRef(false);
 
   useEffect(() => {
@@ -32,12 +35,50 @@ const App: React.FC = () => {
     }
   }, []);
 
+  useEffect(() => {
+    try {
+      const storedModels = localStorage.getItem(LLM_MODELS_KEY);
+      if (storedModels) {
+        const parsedModels = JSON.parse(storedModels) as LLMModel[];
+        if (parsedModels.length > 0) {
+          setLlmModels(parsedModels);
+          setSelectedLlmModelId(parsedModels[0].id);
+          return;
+        }
+      }
+    } catch (error) {
+      console.error("Failed to load LLM models from localStorage:", error);
+    }
+
+    const defaultModel: LLMModel = {
+      id: crypto.randomUUID(),
+      name: 'Gemini 2.5 Flash',
+      provider: 'gemini',
+      modelName: 'gemini-2.5-flash',
+    };
+    setLlmModels([defaultModel]);
+    setSelectedLlmModelId(defaultModel.id);
+    localStorage.setItem(LLM_MODELS_KEY, JSON.stringify([defaultModel]));
+  }, []);
+
   const handleSaveIntegrations = (integrations: CustomIntegration[]) => {
     setCustomIntegrations(integrations);
     try {
       localStorage.setItem(CUSTOM_INTEGRATIONS_KEY, JSON.stringify(integrations));
     } catch (error) {
       console.error("Failed to save custom integrations to localStorage:", error);
+    }
+  };
+
+  const handleSaveModels = (models: LLMModel[]) => {
+    setLlmModels(models);
+    if (!models.some(m => m.id === selectedLlmModelId) && models.length > 0) {
+      setSelectedLlmModelId(models[0].id);
+    }
+    try {
+      localStorage.setItem(LLM_MODELS_KEY, JSON.stringify(models));
+    } catch (error) {
+      console.error("Failed to save LLM models to localStorage:", error);
     }
   };
 
@@ -49,6 +90,12 @@ const App: React.FC = () => {
   };
 
   const analyzeSingleFile = useCallback(async (fileId: string, isBatch: boolean = false) => {
+    const selectedModel = llmModels.find(m => m.id === selectedLlmModelId);
+    if (!selectedModel) {
+      setError("No LLM model is selected for analysis. Please configure one in the settings.");
+      return;
+    }
+
     const file = loraFiles.find(f => f.id === fileId);
     if (!file) {
       console.error("File not found for analysis:", fileId);
@@ -85,7 +132,7 @@ const App: React.FC = () => {
 
     try {
         if (!file.hash) throw new Error(`Hash not ready for ${file.lora.name}.`);
-        const result = await analyzeLoraFileWithGemini(file, file.hash);
+        const result = await analyzeLoraFile(file, file.hash, selectedModel);
         
         if (analysisCancelledRef.current && isBatch) return;
 
@@ -113,7 +160,7 @@ const App: React.FC = () => {
             return newResults;
         });
     }
-  }, [loraFiles, analysisResults]);
+  }, [loraFiles, analysisResults, llmModels, selectedLlmModelId]);
 
   const handleAnalyzeBatch = useCallback(async () => {
     const filesToAnalyze = loraFiles.filter(f => !analysisResults.some(r => r.id === f.id && r.status === AnalysisStatus.COMPLETED));
@@ -168,7 +215,12 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100 flex flex-col">
-      <Header onOpenSettings={() => setIsSettingsOpen(true)} />
+      <Header 
+        onOpenSettings={() => setIsSettingsOpen(true)}
+        llmModels={llmModels}
+        selectedLlmModelId={selectedLlmModelId}
+        onSelectLlmModel={setSelectedLlmModelId}
+      />
       <main className="flex-grow container mx-auto p-4 md:p-8">
         <div className="max-w-4xl mx-auto">
           <div className="mb-8">
@@ -236,8 +288,10 @@ const App: React.FC = () => {
       <SettingsModal 
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
-        initialIntegrations={customIntegrations}
-        onSave={handleSaveIntegrations}
+        initialCustomIntegrations={customIntegrations}
+        onSaveCustomIntegrations={handleSaveIntegrations}
+        initialModels={llmModels}
+        onSaveModels={handleSaveModels}
       />
     </div>
   );
