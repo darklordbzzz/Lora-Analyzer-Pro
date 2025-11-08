@@ -1,10 +1,14 @@
-import React, { useState, useCallback, useMemo, useRef } from 'react';
-import { LoraAnalysis, LoraFileWithPreview, AnalysisStatus } from './types';
+
+import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
+import { LoraAnalysis, LoraFileWithPreview, AnalysisStatus, CustomIntegration } from './types';
 import { analyzeLoraFileWithGemini } from './services/geminiService';
 import Header from './components/Header';
 import FileUpload from './components/FileUpload';
 import AnalysisResults from './components/AnalysisResults';
 import { LoaderIcon, SearchIcon } from './components/Icons';
+import SettingsModal from './components/SettingsModal';
+
+const CUSTOM_INTEGRATIONS_KEY = 'lora-analyzer-pro-custom-integrations';
 
 const App: React.FC = () => {
   const [loraFiles, setLoraFiles] = useState<LoraFileWithPreview[]>([]);
@@ -13,7 +17,29 @@ const App: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [searchCategory, setSearchCategory] = useState<'name' | 'hash' | 'tags' | 'triggerWords'>('name');
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [customIntegrations, setCustomIntegrations] = useState<CustomIntegration[]>([]);
   const analysisCancelledRef = useRef(false);
+
+  useEffect(() => {
+    try {
+      const storedIntegrations = localStorage.getItem(CUSTOM_INTEGRATIONS_KEY);
+      if (storedIntegrations) {
+        setCustomIntegrations(JSON.parse(storedIntegrations));
+      }
+    } catch (error) {
+      console.error("Failed to load custom integrations from localStorage:", error);
+    }
+  }, []);
+
+  const handleSaveIntegrations = (integrations: CustomIntegration[]) => {
+    setCustomIntegrations(integrations);
+    try {
+      localStorage.setItem(CUSTOM_INTEGRATIONS_KEY, JSON.stringify(integrations));
+    } catch (error) {
+      console.error("Failed to save custom integrations to localStorage:", error);
+    }
+  };
 
   const handleFilesChange = (files: LoraFileWithPreview[]) => {
     setLoraFiles(files);
@@ -43,6 +69,8 @@ const App: React.FC = () => {
         huggingfaceUrl: file.huggingfaceUrl,
         tensorArtUrl: file.tensorArtUrl,
         seaartUrl: file.seaartUrl,
+        mageSpaceUrl: file.mageSpaceUrl,
+        customUrls: file.customUrls,
     };
 
     setAnalysisResults(prev => {
@@ -140,10 +168,37 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100 flex flex-col">
-      <Header />
+      <Header onOpenSettings={() => setIsSettingsOpen(true)} />
       <main className="flex-grow container mx-auto p-4 md:p-8">
         <div className="max-w-4xl mx-auto">
-          <FileUpload onFilesChange={handleFilesChange} onAnalyzeSingleFile={analyzeSingleFile} disabled={isLoading} />
+          <div className="mb-8">
+            <div className="relative max-w-lg mx-auto">
+              <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+                <SearchIcon className="h-5 w-5 text-gray-400" />
+              </div>
+              <input
+                type="text"
+                placeholder={`Search by ${searchCategory}...`}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-10 pr-36 py-2.5 bg-gray-800 border border-gray-600 rounded-lg text-white focus:ring-indigo-500 focus:border-indigo-500 transition-colors"
+              />
+              <div className="absolute inset-y-0 right-0 flex items-center">
+                <select
+                  value={searchCategory}
+                  onChange={(e) => setSearchCategory(e.target.value as any)}
+                  className="h-full py-0 pl-2 pr-8 border-transparent bg-transparent text-gray-400 focus:ring-indigo-500 focus:border-indigo-500 rounded-lg"
+                >
+                  <option value="name">Name</option>
+                  <option value="hash">Hash</option>
+                  <option value="tags">Tags</option>
+                  <option value="triggerWords">Trigger Words</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <FileUpload onFilesChange={handleFilesChange} onAnalyzeSingleFile={analyzeSingleFile} disabled={isLoading} customIntegrations={customIntegrations} />
           
           {error && <div className="mt-4 text-center text-red-400 bg-red-900/50 p-3 rounded-lg">{error}</div>}
 
@@ -175,38 +230,15 @@ const App: React.FC = () => {
             </button>
           </div>
           
-          {analysisResults.length > 0 && (
-            <div className="mt-8 mb-6">
-              <div className="relative max-w-lg mx-auto">
-                <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
-                  <SearchIcon className="h-5 w-5 text-gray-400" />
-                </div>
-                <input
-                  type="text"
-                  placeholder={`Search by ${searchCategory}...`}
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-10 pr-36 py-2.5 bg-gray-800 border border-gray-600 rounded-lg text-white focus:ring-indigo-500 focus:border-indigo-500 transition-colors"
-                />
-                <div className="absolute inset-y-0 right-0 flex items-center">
-                  <select
-                    value={searchCategory}
-                    onChange={(e) => setSearchCategory(e.target.value as any)}
-                    className="h-full py-0 pl-2 pr-8 border-transparent bg-transparent text-gray-400 focus:ring-indigo-500 focus:border-indigo-500 rounded-lg"
-                  >
-                    <option value="name">Name</option>
-                    <option value="hash">Hash</option>
-                    <option value="tags">Tags</option>
-                    <option value="triggerWords">Trigger Words</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-          )}
-
           <AnalysisResults results={filteredResults} />
         </div>
       </main>
+      <SettingsModal 
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        initialIntegrations={customIntegrations}
+        onSave={handleSaveIntegrations}
+      />
     </div>
   );
 };

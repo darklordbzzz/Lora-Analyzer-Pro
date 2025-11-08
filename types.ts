@@ -1,7 +1,14 @@
+
 export enum AnalysisStatus {
   PENDING = 'PENDING',
   COMPLETED = 'COMPLETED',
   FAILED = 'FAILED',
+}
+
+export interface CustomIntegration {
+  id: string;
+  name: string;
+  baseUrl: string;
 }
 
 export interface LoraFileWithPreview {
@@ -16,6 +23,7 @@ export interface LoraFileWithPreview {
   tensorArtUrl?: string;
   seaartUrl?: string;
   mageSpaceUrl?: string;
+  customUrls?: Record<string, string>;
 }
 
 export interface TrainingInfo {
@@ -55,4 +63,5 @@ export interface LoraAnalysis {
   tensorArtUrl?: string;
   seaartUrl?: string;
   mageSpaceUrl?: string;
+  customUrls?: Record<string, string>;
 }

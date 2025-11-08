@@ -1,8 +1,12 @@
 
 import React from 'react';
-import { LogoIcon } from './Icons';
+import { LogoIcon, SettingsIcon } from './Icons';
 
-const Header: React.FC = () => {
+interface HeaderProps {
+  onOpenSettings: () => void;
+}
+
+const Header: React.FC<HeaderProps> = ({ onOpenSettings }) => {
   return (
     <header className="bg-gray-900/70 backdrop-blur-sm border-b border-gray-700/50 sticky top-0 z-10">
       <div className="container mx-auto px-4 sm:px-6 lg:px-8">
@@ -11,8 +15,17 @@ const Header: React.FC = () => {
             <LogoIcon className="h-8 w-8 text-indigo-400" />
             <span className="ml-3 text-2xl font-bold text-white">LoRA Analyzer Pro</span>
           </div>
-          <div className="text-sm text-gray-400">
-            Powered by Gemini
+          <div className="flex items-center gap-4">
+            <div className="text-sm text-gray-400">
+              Powered by Gemini
+            </div>
+            <button
+              onClick={onOpenSettings}
+              className="p-2 rounded-full text-gray-400 hover:bg-gray-700 hover:text-white transition-colors"
+              aria-label="Open settings"
+            >
+              <SettingsIcon className="h-6 w-6" />
+            </button>
           </div>
         </div>
       </div>

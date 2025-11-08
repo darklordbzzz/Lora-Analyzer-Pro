@@ -1,3 +1,4 @@
+
 import { GoogleGenAI, Type } from "@google/genai";
 import type { LoraFileWithPreview } from '../types';
 
@@ -183,6 +184,11 @@ const responseSchema = {
         tensorArtUrl: { type: Type.STRING, nullable: true },
         seaartUrl: { type: Type.STRING, nullable: true },
         mageSpaceUrl: { type: Type.STRING, nullable: true },
+        customUrls: { 
+            type: Type.OBJECT,
+            properties: {},
+            nullable: true 
+        },
     },
     required: ["fileName", "fileSizeMB", "modelType", "modelFamily", "baseModel", "category", "resolution", "clips", "version", "confidence", "tags", "triggerWords", "hash", "requirements", "compatibility", "trainingInfo"],
 };
@@ -212,12 +218,13 @@ export const analyzeLoraFileWithGemini = async (file: LoraFileWithPreview, hash:
       - Tensor.Art URL: "${file.tensorArtUrl || ''}"
       - SeaArt.ai URL: "${file.seaartUrl || ''}"
       - Mage.space URL: "${file.mageSpaceUrl || ''}"
+      - Custom Integration URLs: ${JSON.stringify(file.customUrls || {})}
 
-      Perform the analysis and provide the JSON output. If any platform URLs were provided in the file information, you MUST include them in the final JSON output under their respective keys.
+      Perform the analysis and provide the JSON output. If any platform URLs (including custom ones) were provided in the file information, you MUST include them in the final JSON output under their respective keys.
     `;
 
     const response = await ai.models.generateContent({
-      model: 'gem-2.5-flash',
+      model: 'gemini-2.5-flash',
       contents: prompt,
       config: {
         responseMimeType: "application/json",

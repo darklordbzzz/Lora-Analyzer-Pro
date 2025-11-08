@@ -1,17 +1,19 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
-import type { LoraFileWithPreview } from '../types';
-import { UploadIcon, FileIcon, XIcon, ImageIcon, InfoIcon, CivitaiIcon, LoaderIcon, HuggingFaceIcon, DuplicateIcon, TensorArtIcon, SeaArtIcon, MageSpaceIcon } from './Icons';
+import type { LoraFileWithPreview, CustomIntegration } from '../types';
+import { UploadIcon, FileIcon, XIcon, ImageIcon, InfoIcon, CivitaiIcon, LoaderIcon, HuggingFaceIcon, DuplicateIcon, TensorArtIcon, SeaArtIcon, MageSpaceIcon, LinkIcon } from './Icons';
 import { findLoraOnCivitai } from '../services/civitaiService';
 import { findLoraOnHuggingFace } from '../services/huggingfaceService';
 import { findLoraOnTensorArt } from '../services/tensorArtService';
 import { findLoraOnSeaArt } from '../services/seaartService';
 import { findLoraOnMageSpace } from '../services/mageSpaceService';
 import { calculateSHA256 } from '../services/fileService';
+import { findLoraOnGenericPlatform } from '../services/genericIntegrationService';
 
 interface FileUploadProps {
   onFilesChange: (files: LoraFileWithPreview[]) => void;
   onAnalyzeSingleFile: (fileId: string) => void;
   disabled: boolean;
+  customIntegrations: CustomIntegration[];
 }
 
 type HashStatus = 'idle' | 'hashing' | 'done' | 'error';
@@ -19,10 +21,10 @@ interface FileListItem extends LoraFileWithPreview {
   hashStatus: HashStatus;
 }
 
-const FileUpload: React.FC<FileUploadProps> = ({ onFilesChange, onAnalyzeSingleFile, disabled }) => {
+const FileUpload: React.FC<FileUploadProps> = ({ onFilesChange, onAnalyzeSingleFile, disabled, customIntegrations }) => {
   const [fileItems, setFileItems] = useState<FileListItem[]>([]);
   const [isDragging, setIsDragging] = useState(false);
-  const [fetchStatus, setFetchStatus] = useState<Record<string, { loading: 'civitai' | 'hf' | 'tensorart' | 'seaart' | 'magespace' | null; error?: string }>>({});
+  const [fetchStatus, setFetchStatus] = useState<Record<string, { loading: 'civitai' | 'hf' | 'tensorart' | 'seaart' | 'magespace' | string | null; error?: string }>>({});
 
   const updateFiles = useCallback((updatedItems: FileListItem[]) => {
     setFileItems(updatedItems);
@@ -153,7 +155,16 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFilesChange, onAnalyzeSingleF
       const { previewImage, metadata, civitaiUrl } = await findLoraOnCivitai(fileItems[itemIndex].lora);
       const newItems = [...fileItems];
       const currentItem = newItems[itemIndex];
-      newItems[itemIndex] = { ...currentItem, preview: previewImage, metadata: currentItem.metadata || metadata, civitaiUrl: civitaiUrl };
+      
+      let finalPreview = currentItem.preview;
+      const MIN_IMAGE_SIZE_BYTES = 1024;
+      if (previewImage && previewImage.size > MIN_IMAGE_SIZE_BYTES) {
+          if (!currentItem.preview || currentItem.preview.size !== previewImage.size) {
+              finalPreview = previewImage;
+          }
+      }
+
+      newItems[itemIndex] = { ...currentItem, preview: finalPreview, metadata: currentItem.metadata || metadata, civitaiUrl: civitaiUrl };
       updateFiles(newItems);
       setFetchStatus(prev => ({ ...prev, [id]: { loading: null } }));
       onAnalyzeSingleFile(id);
@@ -170,7 +181,16 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFilesChange, onAnalyzeSingleF
       const { previewImage, metadata, huggingfaceUrl } = await findLoraOnHuggingFace(fileItems[itemIndex].lora);
       const newItems = [...fileItems];
       const currentItem = newItems[itemIndex];
-      newItems[itemIndex] = { ...currentItem, preview: previewImage, metadata: currentItem.metadata || metadata, huggingfaceUrl: huggingfaceUrl };
+      
+      let finalPreview = currentItem.preview;
+      const MIN_IMAGE_SIZE_BYTES = 1024;
+      if (previewImage && previewImage.size > MIN_IMAGE_SIZE_BYTES) {
+          if (!currentItem.preview || currentItem.preview.size !== previewImage.size) {
+              finalPreview = previewImage;
+          }
+      }
+
+      newItems[itemIndex] = { ...currentItem, preview: finalPreview, metadata: currentItem.metadata || metadata, huggingfaceUrl: huggingfaceUrl };
       updateFiles(newItems);
       setFetchStatus(prev => ({ ...prev, [id]: { loading: null } }));
       onAnalyzeSingleFile(id);
@@ -187,7 +207,16 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFilesChange, onAnalyzeSingleF
       const { previewImage, metadata, tensorArtUrl } = await findLoraOnTensorArt(fileItems[itemIndex].lora);
       const newItems = [...fileItems];
       const currentItem = newItems[itemIndex];
-      newItems[itemIndex] = { ...currentItem, preview: previewImage, metadata: currentItem.metadata || metadata, tensorArtUrl };
+      
+      let finalPreview = currentItem.preview;
+      const MIN_IMAGE_SIZE_BYTES = 1024;
+      if (previewImage && previewImage.size > MIN_IMAGE_SIZE_BYTES) {
+          if (!currentItem.preview || currentItem.preview.size !== previewImage.size) {
+              finalPreview = previewImage;
+          }
+      }
+
+      newItems[itemIndex] = { ...currentItem, preview: finalPreview, metadata: currentItem.metadata || metadata, tensorArtUrl };
       updateFiles(newItems);
       setFetchStatus(prev => ({ ...prev, [id]: { loading: null } }));
       onAnalyzeSingleFile(id);
@@ -204,7 +233,16 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFilesChange, onAnalyzeSingleF
       const { previewImage, metadata, seaartUrl } = await findLoraOnSeaArt(fileItems[itemIndex].lora);
       const newItems = [...fileItems];
       const currentItem = newItems[itemIndex];
-      newItems[itemIndex] = { ...currentItem, preview: previewImage, metadata: currentItem.metadata || metadata, seaartUrl };
+      
+      let finalPreview = currentItem.preview;
+      const MIN_IMAGE_SIZE_BYTES = 1024;
+      if (previewImage && previewImage.size > MIN_IMAGE_SIZE_BYTES) {
+          if (!currentItem.preview || currentItem.preview.size !== previewImage.size) {
+              finalPreview = previewImage;
+          }
+      }
+
+      newItems[itemIndex] = { ...currentItem, preview: finalPreview, metadata: currentItem.metadata || metadata, seaartUrl };
       updateFiles(newItems);
       setFetchStatus(prev => ({ ...prev, [id]: { loading: null } }));
       onAnalyzeSingleFile(id);
@@ -221,7 +259,51 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFilesChange, onAnalyzeSingleF
       const { previewImage, metadata, mageSpaceUrl } = await findLoraOnMageSpace(fileItems[itemIndex].lora);
       const newItems = [...fileItems];
       const currentItem = newItems[itemIndex];
-      newItems[itemIndex] = { ...currentItem, preview: previewImage, metadata: currentItem.metadata || metadata, mageSpaceUrl };
+      
+      let finalPreview = currentItem.preview;
+      const MIN_IMAGE_SIZE_BYTES = 1024;
+      if (previewImage && previewImage.size > MIN_IMAGE_SIZE_BYTES) {
+          if (!currentItem.preview || currentItem.preview.size !== previewImage.size) {
+              finalPreview = previewImage;
+          }
+      }
+
+      newItems[itemIndex] = { ...currentItem, preview: finalPreview, metadata: currentItem.metadata || metadata, mageSpaceUrl };
+      updateFiles(newItems);
+      setFetchStatus(prev => ({ ...prev, [id]: { loading: null } }));
+      onAnalyzeSingleFile(id);
+    } catch (error: any) {
+      setFetchStatus(prev => ({ ...prev, [id]: { loading: null, error: error.message || 'Unknown error' } }));
+    }
+  };
+
+  const handleFindOnCustomIntegration = async (id: string, integration: CustomIntegration) => {
+    const itemIndex = fileItems.findIndex(item => item.id === id);
+    if (itemIndex === -1) return;
+    setFetchStatus(prev => ({ ...prev, [id]: { loading: integration.id, error: undefined } }));
+    try {
+      const { previewImage, metadata, platformUrl } = await findLoraOnGenericPlatform(fileItems[itemIndex].lora, integration.baseUrl, integration.name);
+      const newItems = [...fileItems];
+      const currentItem = newItems[itemIndex];
+      
+      let finalPreview = currentItem.preview;
+      const MIN_IMAGE_SIZE_BYTES = 1024;
+      if (previewImage && previewImage.size > MIN_IMAGE_SIZE_BYTES) {
+          if (!currentItem.preview || currentItem.preview.size !== previewImage.size) {
+              finalPreview = previewImage;
+          }
+      }
+
+      const updatedItem = {
+          ...currentItem,
+          preview: finalPreview,
+          metadata: currentItem.metadata || metadata,
+          customUrls: {
+            ...(currentItem.customUrls || {}),
+            [integration.name]: platformUrl,
+          },
+      };
+      newItems[itemIndex] = updatedItem;
       updateFiles(newItems);
       setFetchStatus(prev => ({ ...prev, [id]: { loading: null } }));
       onAnalyzeSingleFile(id);
@@ -284,45 +366,47 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFilesChange, onAnalyzeSingleF
                     </div>
                   </div>
                   
-                  <div className="w-full md:w-auto grid grid-cols-2 sm:grid-cols-3 lg:flex lg:flex-row items-stretch sm:items-center gap-2 shrink-0">
-                    <label htmlFor={`preview-upload-${file.id}`} className="relative col-span-full lg:col-span-1 px-3 py-2 bg-gray-700 text-sm text-gray-300 rounded-md cursor-pointer hover:bg-gray-600 transition-colors flex items-center gap-2 justify-center">
+                  <div className="w-full md:w-auto flex flex-wrap items-center justify-start md:justify-end gap-3 shrink-0">
+                    <div className="flex items-center gap-1 bg-gray-900/50 p-1 rounded-lg border border-gray-700" role="group" aria-label="Find model on sources">
+                        <button title="Find on Civitai" onClick={() => handleFindOnCivitai(file.id)} disabled={!!status.loading} className="p-2 rounded-md hover:bg-blue-800/60 transition-colors disabled:opacity-50 disabled:cursor-wait">
+                            {status.loading === 'civitai' ? <LoaderIcon className="h-5 w-5 animate-spin"/> : <CivitaiIcon className="h-5 w-5 text-blue-300" />}
+                        </button>
+                        <button title="Find on Hugging Face" onClick={() => handleFindOnHuggingFace(file.id)} disabled={!!status.loading} className="p-2 rounded-md hover:bg-yellow-800/60 transition-colors disabled:opacity-50 disabled:cursor-wait">
+                            {status.loading === 'hf' ? <LoaderIcon className="h-5 w-5 animate-spin"/> : <HuggingFaceIcon className="h-5 w-5 text-yellow-300" />}
+                        </button>
+                        <button title="Find on Tensor.Art" onClick={() => handleFindOnTensorArt(file.id)} disabled={!!status.loading} className="p-2 rounded-md hover:bg-green-800/60 transition-colors disabled:opacity-50 disabled:cursor-wait">
+                            {status.loading === 'tensorart' ? <LoaderIcon className="h-5 w-5 animate-spin"/> : <TensorArtIcon className="h-5 w-5 text-green-300" />}
+                        </button>
+                        <button title="Find on SeaArt" onClick={() => handleFindOnSeaArt(file.id)} disabled={!!status.loading} className="p-2 rounded-md hover:bg-purple-800/60 transition-colors disabled:opacity-50 disabled:cursor-wait">
+                            {status.loading === 'seaart' ? <LoaderIcon className="h-5 w-5 animate-spin"/> : <SeaArtIcon className="h-5 w-5 text-purple-300" />}
+                        </button>
+                        <button title="Find on Mage.space" onClick={() => handleFindOnMageSpace(file.id)} disabled={!!status.loading} className="p-2 rounded-md hover:bg-pink-800/60 transition-colors disabled:opacity-50 disabled:cursor-wait">
+                            {status.loading === 'magespace' ? <LoaderIcon className="h-5 w-5 animate-spin"/> : <MageSpaceIcon className="h-5 w-5 text-pink-300" />}
+                        </button>
+                        {customIntegrations.map(integration => (
+                            <button key={integration.id} title={`Find on ${integration.name}`} onClick={() => handleFindOnCustomIntegration(file.id, integration)} disabled={!!status.loading} className="p-2 rounded-md hover:bg-gray-600 transition-colors disabled:opacity-50 disabled:cursor-wait">
+                                {status.loading === integration.id ? <LoaderIcon className="h-5 w-5 animate-spin"/> : <LinkIcon className="h-5 w-5 text-gray-300" />}
+                            </button>
+                        ))}
+                    </div>
+
+                    <label htmlFor={`preview-upload-${file.id}`} className="px-3 py-2 bg-gray-700 text-sm text-gray-300 rounded-md cursor-pointer hover:bg-gray-600 transition-colors flex items-center gap-2 justify-center">
                         <ImageIcon className="h-4 w-4" />
-                        {file.preview ? "Change" : "Add"} Preview
+                        <span>{file.preview ? "Change" : "Add"} Preview</span>
                         <input id={`preview-upload-${file.id}`} type="file" accept="image/*" className="hidden" onChange={(e) => handlePreviewChange(file.id, e)} />
                     </label>
-                    
-                    <button onClick={() => handleFindOnCivitai(file.id)} disabled={!!status.loading} className="px-3 py-2 bg-blue-800/60 text-sm text-blue-200 rounded-md hover:bg-blue-700/60 transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-wait">
-                        {status.loading === 'civitai' ? <LoaderIcon className="h-4 w-4 animate-spin"/> : <CivitaiIcon className="h-4 w-4" />}
-                        <span>Civitai</span>
-                    </button>
-                    <button onClick={() => handleFindOnHuggingFace(file.id)} disabled={!!status.loading} className="px-3 py-2 bg-yellow-800/60 text-sm text-yellow-200 rounded-md hover:bg-yellow-700/60 transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-wait">
-                        {status.loading === 'hf' ? <LoaderIcon className="h-4 w-4 animate-spin"/> : <HuggingFaceIcon className="h-4 w-4" />}
-                        <span>HF</span>
-                    </button>
-                     <button onClick={() => handleFindOnTensorArt(file.id)} disabled={!!status.loading} className="px-3 py-2 bg-green-800/60 text-sm text-green-200 rounded-md hover:bg-green-700/60 transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-wait">
-                        {status.loading === 'tensorart' ? <LoaderIcon className="h-4 w-4 animate-spin"/> : <TensorArtIcon className="h-4 w-4" />}
-                        <span>Tensor.Art</span>
-                    </button>
-                    <button onClick={() => handleFindOnSeaArt(file.id)} disabled={!!status.loading} className="px-3 py-2 bg-purple-800/60 text-sm text-purple-200 rounded-md hover:bg-purple-700/60 transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-wait">
-                        {status.loading === 'seaart' ? <LoaderIcon className="h-4 w-4 animate-spin"/> : <SeaArtIcon className="h-4 w-4" />}
-                        <span>SeaArt</span>
-                    </button>
-                     <button onClick={() => handleFindOnMageSpace(file.id)} disabled={!!status.loading} className="px-3 py-2 bg-pink-800/60 text-sm text-pink-200 rounded-md hover:bg-pink-700/60 transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-wait">
-                        {status.loading === 'magespace' ? <LoaderIcon className="h-4 w-4 animate-spin"/> : <MageSpaceIcon className="h-4 w-4" />}
-                        <span>Mage</span>
-                    </button>
-                    
+
                     <textarea
-                      placeholder="Paste safetensors metadata (optional)"
+                      placeholder="Paste metadata..."
                       value={file.metadata}
                       onChange={(e) => handleMetadataChange(file.id, e)}
-                      className="w-full sm:w-48 h-10 py-2 px-3 bg-gray-900/80 text-gray-300 text-xs rounded-md border border-gray-600 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all font-mono resize-y col-span-full lg:col-span-1"
+                      className="w-36 h-10 py-2 px-3 bg-gray-900/80 text-gray-300 text-xs rounded-md border border-gray-600 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all font-mono resize-y"
                       rows={1}
                       onFocus={e => {e.target.rows = 4; e.target.classList.remove('h-10')}}
                       onBlur={e => {if(!e.target.value) {e.target.rows = 1; e.target.classList.add('h-10')}}}
                     ></textarea>
 
-                    <button onClick={() => handleRemoveFile(file.id)} className="col-span-full lg:col-span-1 p-2 bg-red-800/50 text-red-300 rounded-md hover:bg-red-700/50 transition-colors flex justify-center">
+                    <button onClick={() => handleRemoveFile(file.id)} className="p-2.5 bg-red-800/50 text-red-300 rounded-md hover:bg-red-700/50 transition-colors flex justify-center">
                       <XIcon className="h-5 w-5" />
                     </button>
                   </div>

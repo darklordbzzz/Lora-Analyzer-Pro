@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import type { LoraAnalysis, TrainingInfo } from '../types';
 import { AnalysisStatus } from '../types';
@@ -63,7 +64,7 @@ const HashDisplay: React.FC<{ hash?: string }> = ({ hash }) => {
     )
 }
 
-const LinkDisplay: React.FC<{ url: string; icon: React.ReactNode }> = ({ url, icon }) => {
+const LinkDisplay: React.FC<{ url: string; icon: React.ReactNode, name?: string }> = ({ url, icon, name }) => {
     const [copied, setCopied] = useState(false);
 
     const handleCopy = () => {
@@ -74,9 +75,9 @@ const LinkDisplay: React.FC<{ url: string; icon: React.ReactNode }> = ({ url, ic
 
     return (
         <div className="flex items-center gap-2 bg-gray-900/50 p-2 rounded-md text-xs w-full">
-            <div className="shrink-0">{icon}</div>
+            <div className="shrink-0 w-5 h-5 flex items-center justify-center">{icon}</div>
             <a href={url} target="_blank" rel="noopener noreferrer" className="flex-grow font-mono text-gray-400 truncate hover:text-indigo-300 transition-colors" title={url}>
-                {url}
+                {name ? name : url}
             </a>
             <button onClick={handleCopy} className="p-1.5 rounded-md bg-gray-600 hover:bg-indigo-600 transition-colors shrink-0">
                 <CopyIcon className={`h-4 w-4 ${copied ? 'text-green-400' : 'text-gray-300'}`} />
@@ -112,6 +113,7 @@ const LoraCard: React.FC<LoraCardProps> = ({ result }) => {
         );
       case AnalysisStatus.COMPLETED:
         const confidenceColor = result.confidence && result.confidence > 0.7 ? 'text-green-400' : result.confidence && result.confidence > 0.4 ? 'text-yellow-400' : 'text-red-400';
+        const hasCustomUrls = result.customUrls && Object.keys(result.customUrls).length > 0;
         return (
             <>
                 <div className="p-4 border-b border-gray-700/50">
@@ -137,24 +139,27 @@ const LoraCard: React.FC<LoraCardProps> = ({ result }) => {
                     </div>
                 </div>
                 
-                {(result.civitaiUrl || result.huggingfaceUrl || result.tensorArtUrl || result.seaartUrl || result.mageSpaceUrl) && (
+                {(result.civitaiUrl || result.huggingfaceUrl || result.tensorArtUrl || result.seaartUrl || result.mageSpaceUrl || hasCustomUrls) && (
                     <DetailSection title="Source Links" icon={<LinkIcon className="h-5 w-5 text-teal-400"/>} isOpen={openSection === 'links'} onToggle={() => toggleSection('links')}>
                         <div className="space-y-2">
                             {result.civitaiUrl && (
-                                <LinkDisplay url={result.civitaiUrl} icon={<CivitaiIcon className="h-5 w-5 text-blue-400" />} />
+                                <LinkDisplay url={result.civitaiUrl} icon={<CivitaiIcon className="h-5 w-5 text-blue-400" />} name="Civitai" />
                             )}
                             {result.huggingfaceUrl && (
-                                <LinkDisplay url={result.huggingfaceUrl} icon={<HuggingFaceIcon className="h-5 w-5 text-yellow-400" />} />
+                                <LinkDisplay url={result.huggingfaceUrl} icon={<HuggingFaceIcon className="h-5 w-5 text-yellow-400" />} name="Hugging Face" />
                             )}
                              {result.tensorArtUrl && (
-                                <LinkDisplay url={result.tensorArtUrl} icon={<TensorArtIcon className="h-5 w-5 text-green-400" />} />
+                                <LinkDisplay url={result.tensorArtUrl} icon={<TensorArtIcon className="h-5 w-5 text-green-400" />} name="Tensor.Art" />
                             )}
                             {result.seaartUrl && (
-                                <LinkDisplay url={result.seaartUrl} icon={<SeaArtIcon className="h-5 w-5 text-purple-400" />} />
+                                <LinkDisplay url={result.seaartUrl} icon={<SeaArtIcon className="h-5 w-5 text-purple-400" />} name="SeaArt" />
                             )}
                             {result.mageSpaceUrl && (
-                                <LinkDisplay url={result.mageSpaceUrl} icon={<MageSpaceIcon className="h-5 w-5 text-pink-400" />} />
+                                <LinkDisplay url={result.mageSpaceUrl} icon={<MageSpaceIcon className="h-5 w-5 text-pink-400" />} name="Mage.space" />
                             )}
+                            {result.customUrls && Object.entries(result.customUrls).map(([name, url]) => (
+                                <LinkDisplay key={name} url={url} icon={<LinkIcon className="h-5 w-5 text-gray-400" />} name={name} />
+                            ))}
                         </div>
                     </DetailSection>
                 )}
