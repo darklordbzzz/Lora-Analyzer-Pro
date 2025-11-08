@@ -1,0 +1,5 @@
+{
+  "name": "LoRA Analyzer Pro",
+  "description": "An advanced web-based tool to analyze LoRA files using AI. Upload your .safetensors files, optionally provide a preview image and metadata, and get a detailed breakdown of model type, compatibility, tags, and more.",
+  "requestFramePermissions": []
+}
