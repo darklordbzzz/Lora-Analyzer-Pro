@@ -1,6 +1,31 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import type { LoraFileWithPreview, LLMModel } from '../types';
 
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+const withRetry = async <T>(fn: () => Promise<T>, retries = 3, initialDelay = 1500): Promise<T> => {
+    let attempt = 0;
+    while (true) {
+        try {
+            return await fn();
+        } catch (error: any) {
+            attempt++;
+            
+            const isRateLimitError = (error.toString && error.toString().includes('429')) || (error.message && error.message.includes('429'));
+
+            if (isRateLimitError && attempt < retries) {
+                // Exponential backoff with jitter
+                const waitTime = initialDelay * Math.pow(2, attempt - 1) + (Math.random() - 0.5) * 1000;
+                console.warn(`Rate limit hit. Retrying in ${Math.round(waitTime / 1000)}s... (Attempt ${attempt}/${retries})`);
+                await delay(waitTime);
+            } else {
+                // For other errors or after all retries, fail.
+                throw error;
+            }
+        }
+    }
+};
+
 const LORA_ANALYZER_PYTHON_SCRIPT = `
 import os
 import json
@@ -265,15 +290,18 @@ const callOpenAIAPI = async (file: LoraFileWithPreview, hash: string, llmModel: 
 };
 
 export const analyzeLoraFile = async (file: LoraFileWithPreview, hash: string, llmModel: LLMModel) => {
-    try {
-        let result;
+    const apiCall = () => {
         if (llmModel.provider === 'gemini') {
-            result = await callGeminiAPI(file, hash, llmModel);
+            return callGeminiAPI(file, hash, llmModel);
         } else if (llmModel.provider === 'openai') {
-            result = await callOpenAIAPI(file, hash, llmModel);
+            return callOpenAIAPI(file, hash, llmModel);
         } else {
-            throw new Error(`Unsupported LLM provider: ${llmModel.provider}`);
+            return Promise.reject(new Error(`Unsupported LLM provider: ${llmModel.provider}`));
         }
+    };
+
+    try {
+        const result = await withRetry(apiCall);
         
         // Manually add custom URLs as they are not part of the AI's response schema
         result.customUrls = file.customUrls;
@@ -281,6 +309,30 @@ export const analyzeLoraFile = async (file: LoraFileWithPreview, hash: string, l
 
     } catch (error: any) {
         console.error(`Error analyzing ${file.lora.name} with ${llmModel.name}:`, error);
-        throw new Error('Failed to call the Gemini API. Please try again.');
+        
+        let errorMessage = 'Failed to analyze file. Please check console for details.';
+        
+        const errorString = error.message || error.toString();
+        
+        if (errorString.includes('quota')) {
+            errorMessage = 'API quota exceeded. Please check your plan and billing details.';
+        } else if (errorString.includes('429')) {
+            errorMessage = 'Rate limit exceeded. Please try again in a few moments.';
+        } else {
+            try {
+                // Attempt to parse Gemini's JSON error format from the message
+                const errorJson = JSON.parse(errorString);
+                if (errorJson.error && errorJson.error.message) {
+                    errorMessage = `API Error: ${errorJson.error.message}`;
+                }
+            } catch (e) {
+                // Not a JSON error, use the string directly if it's not too long and is informative
+                if (errorString.length < 150 && !errorString.toLowerCase().includes('failed to fetch')) {
+                    errorMessage = errorString;
+                }
+            }
+        }
+
+        throw new Error(errorMessage);
     }
 };
