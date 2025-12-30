@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import type { LoraAnalysis } from '../types';
+import type { LoraAnalysis, LLMModel } from '../types';
 import { AnalysisStatus } from '../types';
 import { 
     LoaderIcon, CheckCircleIcon, ChevronDownIcon, 
@@ -14,6 +14,7 @@ interface LoraCardProps {
   onDelete?: () => void;
   onRetry?: () => void;
   canRetry?: boolean;
+  activeModel?: LLMModel;
 }
 
 const DetailSection: React.FC<{ title: string; icon: React.ReactNode; children: React.ReactNode; isOpen: boolean; onToggle: () => void; count?: number }> = ({ title, icon, children, isOpen, onToggle, count }) => (
@@ -32,7 +33,7 @@ const DetailSection: React.FC<{ title: string; icon: React.ReactNode; children: 
     </div>
 );
 
-const LoraCard: React.FC<LoraCardProps> = ({ result, onDelete }) => {
+const LoraCard: React.FC<LoraCardProps> = ({ result, onDelete, activeModel }) => {
     const [openSection, setOpenSection] = useState<string | null>(null);
     const [isIntegrating, setIsIntegrating] = useState(false);
     const [intStatus, setIntStatus] = useState<'idle' | 'success' | 'error'>('idle');
@@ -53,11 +54,11 @@ const LoraCard: React.FC<LoraCardProps> = ({ result, onDelete }) => {
             const res = await initializeIntegratedCore(mockFile);
             if (res.success) {
                 setIntStatus('success');
-                const model = {
+                const model: LLMModel = {
                     id: 'mounted-gguf-node',
-                    name: `Core: ${String(result.fileName).split(/[\\/]/).pop()}`,
-                    provider: 'gemini' as const,
-                    modelName: 'gemini-3-pro-preview',
+                    name: `Node: ${String(result.fileName).split(/[\\/]/).pop()?.toUpperCase() || 'LOCAL'}`,
+                    provider: 'custom-api',
+                    modelName: String(result.fileName).split(/[\\/]/).pop() || 'local-model',
                     apiUrl: 'integrated://core'
                 };
                 (window as any).onViewChange?.('chat', { activateModel: model });
@@ -192,11 +193,11 @@ const LoraCard: React.FC<LoraCardProps> = ({ result, onDelete }) => {
                             className={`flex-grow flex items-center justify-center gap-2 px-4 py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all shadow-xl active:scale-95 border ${intStatus === 'success' ? 'bg-green-600 border-green-500 text-white' : 'bg-indigo-600 border-indigo-500 hover:bg-indigo-500 text-white disabled:opacity-50'}`}
                         >
                             {isIntegrating ? <LoaderIcon className="h-3.5 w-3.5 animate-spin" /> : intStatus === 'success' ? <CheckCircleIcon className="h-3.5 w-3.5" /> : <PlugIcon className="h-3.5 w-3.5" />}
-                            {isIntegrating ? 'Integrating' : intStatus === 'success' ? 'Hub Active' : 'Integrate Hub'}
+                            {isIntegrating ? 'Mounting' : intStatus === 'success' ? 'Hub Active' : 'Integrate Hub'}
                         </button>
                     ) : (
                         <div className="flex-grow flex items-center justify-center px-4 py-3 bg-gray-800/40 text-[9px] font-black text-gray-600 uppercase tracking-widest rounded-xl border border-gray-700/50">
-                            Static Resource
+                            Neural Resource Locked
                         </div>
                     )}
                     <button onClick={onDelete} className="p-3 bg-gray-800 text-gray-500 hover:text-red-400 border border-gray-700 rounded-xl transition-all shadow-lg"><TrashIcon className="h-4 w-4" /></button>
@@ -204,7 +205,7 @@ const LoraCard: React.FC<LoraCardProps> = ({ result, onDelete }) => {
                 <div className="bg-gray-950 p-3 rounded-xl border border-gray-800/50 shadow-inner group-hover:border-indigo-500/20 transition-colors">
                     <p className="text-[8px] font-mono text-gray-600 truncate leading-none uppercase tracking-tighter flex items-center gap-2">
                          <div className="w-1 h-1 rounded-full bg-gray-700"></div>
-                         ID: {result.hash?.substring(0, 16) || 'UNREGISTERED'}
+                         UID: {result.hash?.substring(0, 16) || 'UNLINKED'}
                     </p>
                 </div>
             </div>

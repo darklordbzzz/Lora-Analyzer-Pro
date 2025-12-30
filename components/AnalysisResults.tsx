@@ -1,6 +1,6 @@
 
 import React from 'react';
-import type { LoraAnalysis } from '../types';
+import type { LoraAnalysis, LLMModel } from '../types';
 import LoraCard from './LoraCard';
 
 interface AnalysisResultsProps {
@@ -8,9 +8,10 @@ interface AnalysisResultsProps {
   onDelete: (id: string) => void;
   onRetry: (result: LoraAnalysis) => void;
   canRetry: (result: LoraAnalysis) => boolean;
+  activeModel?: LLMModel;
 }
 
-const AnalysisResults: React.FC<AnalysisResultsProps> = ({ results, onDelete, onRetry, canRetry }) => {
+const AnalysisResults: React.FC<AnalysisResultsProps> = ({ results, onDelete, onRetry, canRetry, activeModel }) => {
   if (results.length === 0) {
     return null;
   }
@@ -24,6 +25,7 @@ const AnalysisResults: React.FC<AnalysisResultsProps> = ({ results, onDelete, on
             onDelete={() => onDelete(result.id)}
             onRetry={() => onRetry(result)}
             canRetry={canRetry(result)}
+            activeModel={activeModel}
         />
       ))}
     </div>

@@ -4,6 +4,95 @@ import type { LoraFileWithPreview, LLMModel, ChatMessage, AudioAnalysisResult, I
 
 export type { ImageAnalysisResult };
 
+/**
+ * Universal Agnostic LLM Caller
+ * Routes requests to Gemini, Ollama, or Custom Local APIs based on the active model config.
+ */
+const callAgnosticLLM = async (
+    prompt: string, 
+    model: LLMModel, 
+    options: { json?: boolean, system?: string, images?: { data: string, mimeType: string }[] } = {}
+): Promise<string> => {
+    const isGemini = model.provider === 'gemini';
+    const isIntegrated = model.apiUrl?.startsWith('integrated://');
+    const isLocal = model.provider === 'ollama' || model.provider === 'lm-studio' || model.provider === 'custom-api' || isIntegrated;
+
+    if (isGemini) {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const parts: any[] = [{ text: prompt }];
+        
+        if (options.images) {
+            options.images.forEach(img => {
+                parts.unshift({ inlineData: { data: img.data, mimeType: img.mimeType } });
+            });
+        }
+
+        const response = await ai.models.generateContent({
+            model: model.modelName || 'gemini-3-flash-preview',
+            contents: [{ role: 'user', parts }],
+            config: {
+                systemInstruction: options.system,
+                responseMimeType: options.json ? "application/json" : "text/plain"
+            }
+        });
+        return response.text || '';
+    }
+
+    // Local / Custom API / Ollama Path
+    // Using OpenAI-compatible chat completions as the standard for local engines
+    const cleanUrl = (model.apiUrl || 'http://localhost:11434/v1').replace(/\/$/, '');
+    const endpoint = model.provider === 'ollama' && !cleanUrl.endsWith('/v1') ? `${cleanUrl}/v1/chat/completions` : `${cleanUrl}/chat/completions`;
+
+    const body: any = {
+        model: model.modelName,
+        messages: [
+            ...(options.system ? [{ role: 'system', content: options.system }] : []),
+            { 
+                role: 'user', 
+                content: options.images && options.images.length > 0 
+                    ? [
+                        { type: 'text', text: prompt },
+                        ...options.images.map(img => ({ 
+                            type: 'image_url', 
+                            image_url: { url: `data:${img.mimeType};base64,${img.data}` } 
+                        }))
+                      ]
+                    : prompt 
+            }
+        ],
+        temperature: 0.7,
+        ...(options.json ? { response_format: { type: 'json_object' } } : {})
+    };
+
+    const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        ...(model.apiKey ? { 'Authorization': `Bearer ${model.apiKey}` } : {})
+    };
+
+    if (model.customHeaders) {
+        model.customHeaders.forEach(h => { if(h.key && h.value) headers[h.key] = h.value; });
+    }
+
+    try {
+        const res = await fetch(endpoint, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(body)
+        });
+
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({ error: res.statusText }));
+            throw new Error(err.error?.message || err.error || `Local Node Error [${res.status}]`);
+        }
+
+        const data = await res.json();
+        return data.choices[0]?.message?.content || '';
+    } catch (e: any) {
+        if (isIntegrated) throw new Error("Integrated Kernel Unreachable. Ensure file is correctly mounted in Architecture settings.");
+        throw e;
+    }
+};
+
 const sanitizeValue = (val: any): string => {
     if (val === null || val === undefined) return '';
     if (typeof val === 'string') return val;
@@ -70,7 +159,6 @@ function pcmToWav(pcmBase64: string, sampleRate: number = 24000): Blob {
 export const generateAudioAgnostic = async (prompt: string, engineId: string, signal?: AbortSignal): Promise<string> => {
     const stored = localStorage.getItem('lora-analyzer-pro-audio-nodes');
     const nodes: AudioEngineNode[] = stored ? JSON.parse(stored) : [];
-    
     let node = nodes.find(n => n.modelName === engineId);
 
     if (node?.provider === 'huggingface' || (!node && engineId.includes('/'))) {
@@ -111,6 +199,7 @@ export const generateAudioAgnostic = async (prompt: string, engineId: string, si
         return data[0].audio_url || data[0].url;
     }
 
+    // Default to Gemini TTS as a high-fidelity fallback
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const response = await ai.models.generateContent({
         model: "gemini-2.5-flash-preview-tts",
@@ -127,8 +216,10 @@ export const generateAudioAgnostic = async (prompt: string, engineId: string, si
 };
 
 export const streamChat = async (history: ChatMessage[], model: LLMModel, onChunk: (chunk: string, thought?: string) => void) => {
-    const isIntegrated = model.apiUrl === 'integrated://core';
-    if (model.provider === 'gemini' || isIntegrated) {
+    const isGemini = model.provider === 'gemini';
+    const isIntegrated = model.apiUrl?.startsWith('integrated://');
+    
+    if (isGemini) {
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
         const response = await ai.models.generateContentStream({
             model: model.modelName || 'gemini-3-flash-preview',
@@ -138,21 +229,42 @@ export const streamChat = async (history: ChatMessage[], model: LLMModel, onChun
         for await (const chunk of response) onChunk(chunk.text || '');
     } else {
         const cleanUrl = (model.apiUrl || 'http://localhost:11434/v1').replace(/\/$/, '');
-        const res = await fetch(`${cleanUrl}/chat/completions`, {
+        const endpoint = model.provider === 'ollama' && !cleanUrl.endsWith('/v1') ? `${cleanUrl}/v1/chat/completions` : `${cleanUrl}/chat/completions`;
+        
+        const res = await fetch(endpoint, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model: model.modelName, messages: history.map(h => ({ role: h.role, content: h.content })), stream: true })
+            headers: { 
+                'Content-Type': 'application/json',
+                ...(model.apiKey ? { 'Authorization': `Bearer ${model.apiKey}` } : {})
+            },
+            body: JSON.stringify({ 
+                model: model.modelName, 
+                messages: history.map(h => ({ role: h.role, content: h.content })), 
+                stream: true 
+            })
         });
+
+        if (!res.ok) throw new Error(`Neural Link Error: ${res.statusText}`);
+
         const reader = res.body?.getReader();
         const decoder = new TextDecoder();
+        let buffer = '';
+
         while (reader) {
             const { done, value } = await reader.read();
             if (done) break;
-            const lines = decoder.decode(value).split('\n');
+            
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
             for (const line of lines) {
-                if (line.startsWith('data: ')) {
+                const cleanLine = line.trim();
+                if (cleanLine.startsWith('data: ')) {
+                    const jsonStr = cleanLine.substring(6);
+                    if (jsonStr === '[DONE]') break;
                     try {
-                        const data = JSON.parse(line.substring(6));
+                        const data = JSON.parse(jsonStr);
                         onChunk(data.choices[0]?.delta?.content || '');
                     } catch (e) {}
                 }
@@ -163,86 +275,78 @@ export const streamChat = async (history: ChatMessage[], model: LLMModel, onChun
 
 export const analyzeImageWithLLM = async (imageFile: File, llmModel: LLMModel): Promise<ImageAnalysisResult> => {
     const base64 = await fileToBase64(imageFile);
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: { parts: [ { inlineData: { mimeType: imageFile.type, data: base64 } }, { text: `Analyze image for reproduction. JSON: imageDescriptor, styleDescriptor, lightingDescriptor, techniqueDescriptor, colorGammaDescriptor, suggestedArtists (array).` } ] },
-        config: { responseMimeType: "application/json" }
+    const prompt = `Analyze image for reproduction. Return JSON: imageDescriptor (string), styleDescriptor (string), lightingDescriptor (string), techniqueDescriptor (string), colorGammaDescriptor (string), suggestedArtists (array of strings).`;
+    
+    const text = await callAgnosticLLM(prompt, llmModel, { 
+        json: true, 
+        images: [{ data: base64, mimeType: imageFile.type }] 
     });
-    return JSON.parse(response.text || '{}');
+    
+    try {
+        return JSON.parse(text.replace(/```json|```/g, '').trim());
+    } catch {
+        throw new Error("Neural Hub returned malformed visual telemetry.");
+    }
 };
 
-export const analyzeAudioWithLLM = async (audioFile: File, model?: LLMModel): Promise<AudioAnalysisResult> => {
-    if (!model) throw new Error("No model selected.");
+export const analyzeAudioWithLLM = async (audioFile: File, model: LLMModel): Promise<AudioAnalysisResult> => {
     const base64 = await fileToBase64(audioFile);
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: { parts: [ { inlineData: { mimeType: audioFile.type, data: base64 } }, { text: "Analyze audio. Return JSON: title, artist, album, genre, bpm (number), key, mood, instrumentation (array), lyrics, description." } ] },
-        config: { responseMimeType: "application/json" }
+    const prompt = "Analyze audio carefully. Return JSON: title, artist, album, genre, bpm (number), key, mood, instrumentation (array), lyrics, description.";
+    
+    // Most local models don't support direct audio input yet, so we warn the user if using a non-Gemini model for this specific multimodal task
+    if (model.provider !== 'gemini') {
+        throw new Error("Acoustic Multimodal Audit requires a Native Audio Pulse. Please use Gemini 3 Flash/Pro for this sector.");
+    }
+
+    const text = await callAgnosticLLM(prompt, model, { 
+        json: true, 
+        images: [{ data: base64, mimeType: audioFile.type }] 
     });
-    return sanitizeAudioResult(JSON.parse(response.text || '{}'));
+    
+    return sanitizeAudioResult(JSON.parse(text.replace(/```json|```/g, '').trim() || '{}'));
 };
 
 export const analyzeVideoSurface = async (frames: string[], videoFile: File, llmModel: LLMModel): Promise<string> => {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    
-    // Convert frames to Parts
-    const frameParts = frames.map(f => ({
-        inlineData: {
-            mimeType: 'image/jpeg',
-            data: f.split(',')[1]
-        }
+    const frameData = frames.map(f => ({
+        data: f.split(',')[1],
+        mimeType: 'image/jpeg'
     }));
     
-    // We send a slice of the video file for audio context (limit to first 10MB to be safe for inlineData)
-    const videoSlice = videoFile.size > 10 * 1024 * 1024 ? videoFile.slice(0, 10 * 1024 * 1024) : videoFile;
-    const videoBase64 = await fileToBase64(videoSlice as File);
-    const safeMimeType = videoFile.type || 'video/mp4';
+    const prompt = "Perform an integrated 'Surface Audit' of this video asset. Analyze the visual progression through the provided 10 keyframes. Your report should include: 1) Visual Composition & Style, 2) Acoustic & Narrative Audit (based on audio), and 3) Final Cross-modal Conclusion. Be technical and precise.";
 
-    const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: { 
-            parts: [
-                ...frameParts,
-                { inlineData: { mimeType: safeMimeType, data: videoBase64 } },
-                { text: "Perform an integrated 'Surface Audit' of this video asset. Analyze the visual progression through the provided 10 keyframes and cross-reference with the audio track of the video bitstream. Your report should include: 1) Visual Composition & Style, 2) Acoustic & Narrative Audit (based on audio), and 3) Final Cross-modal Conclusion. Be technical and precise." }
-            ] 
-        }
-    });
-    return response.text || 'Integrated Surface Audit inconclusive.';
+    return await callAgnosticLLM(prompt, llmModel, { images: frameData });
 };
 
 export const analyzeVideoFrames = async (frames: string[], llmModel: LLMModel): Promise<string> => {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const parts = frames.map(f => ({
-        inlineData: {
-            mimeType: 'image/jpeg',
-            data: f.split(',')[1]
-        }
+    const frameData = frames.map(f => ({
+        data: f.split(',')[1],
+        mimeType: 'image/jpeg'
     }));
     
-    const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: { 
-            parts: [
-                ...parts,
-                { text: "Analyze this series of frames from a video (temporal sequence). Provide a high-level 'Surface Audit' describing the visual progression, key subjects, cinematic style, and any notable motion or scene transitions observed across the sequence. Be concise but technical." }
-            ] 
-        }
-    });
-    return response.text || 'Surface Audit inconclusive.';
+    const prompt = "Analyze this series of frames from a video (temporal sequence). Provide a high-level 'Surface Audit' describing the visual progression, key subjects, cinematic style, and any notable motion or scene transitions observed across the sequence. Be concise but technical.";
+
+    return await callAgnosticLLM(prompt, llmModel, { images: frameData });
 };
 
 export const analyzeLoraFile = async (file: LoraFileWithPreview, hash: string, model: LLMModel) => {
-    const prompt = `Perform a high-fidelity Technical Audit of file "${file.lora.name}". Header Buffer: ${file.metadata.substring(0, 5000)}. Return strictly JSON.`;
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        config: { responseMimeType: "application/json" }
-    });
-    return sanitizeLoraResult(JSON.parse(response.text || '{}'));
+    const prompt = `Perform a high-fidelity Technical Audit of machine-learning resource metadata. 
+    FileName: "${file.lora.name}"
+    Size: ${file.lora.size} bytes
+    Header Raw Data Segment: 
+    ${file.metadata.substring(0, 10000)}
+    
+    Identify: modelType (LoRA/Checkpoint/etc), modelFamily (SD1.5, SDXL, Pony, Flux, etc), baseModel (Specific version), triggerWords (Array), usageTips (Array), tags (Array), and confidence (0-1).
+    Return strictly valid JSON.`;
+
+    const text = await callAgnosticLLM(prompt, model, { json: true, system: "You are a specialized Safetensors Header Metadata Auditor." });
+    
+    try {
+        const cleaned = text.replace(/```json|```/g, '').trim();
+        return sanitizeLoraResult(JSON.parse(cleaned));
+    } catch (e) {
+        console.error("Audit Parse Failure", text);
+        throw new Error("Neural Audit returned unparseable logic stream.");
+    }
 };
 
 export const checkComfyConnection = async (): Promise<'online' | 'busy' | 'offline'> => {
@@ -266,8 +370,14 @@ export const generateImageWithAI = async (state: ImageStudioState, activeModel?:
         const queueData = await queueRes.json();
         return await pollComfyResults(url, queueData.prompt_id);
     }
+    
+    // Cloud Path (Gemini Imagen 4 or Nano Banana)
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const response = await ai.models.generateContent({ model: 'gemini-2.5-flash-image', contents: state.prompt, config: { imageConfig: { aspectRatio: state.aspectRatio } } });
+    const response = await ai.models.generateContent({ 
+        model: 'gemini-2.5-flash-image', 
+        contents: state.prompt, 
+        config: { imageConfig: { aspectRatio: state.aspectRatio } } 
+    });
     for (const part of response.candidates[0].content.parts) if (part.inlineData) return `data:image/png;base64,${part.inlineData.data}`;
     throw new Error("Cloud Render Failed.");
 };
@@ -278,7 +388,9 @@ async function pollComfyResults(url: string, promptId: string): Promise<string> 
         if (res.ok) {
             const history = await res.json();
             if (history[promptId]) {
-                const img = history[promptId].outputs[Object.keys(history[promptId].outputs)[0]].images[0];
+                const outputs = history[promptId].outputs;
+                const outputKey = Object.keys(outputs)[0];
+                const img = outputs[outputKey].images[0];
                 return `${url}/view?filename=${img.filename}&subfolder=${img.subfolder}&type=${img.type}`;
             }
         }
@@ -318,13 +430,21 @@ export const fileToBase64 = (file: File): Promise<string> => {
 };
 
 export const initializeIntegratedCore = async (file: File): Promise<{success: boolean, error?: string}> => {
-    if (!file.name.toLowerCase().endsWith('.gguf')) return { success: false, error: "Signature Mismatch." };
+    if (!file.name.toLowerCase().endsWith('.gguf')) return { success: false, error: "Signature Mismatch. GGUF expected." };
+    // This is a browser environment, true GGUF mounting requires WebLLM or Wasm.
+    // For now, we simulate success as the hub is designed to connect to local runners or local wrappers.
     return { success: true };
 };
 
 export const probeExternalNode = async (url: string, modelName: string, apiKey?: string): Promise<'online' | 'ready' | 'offline'> => {
     try {
-        const response = await fetch(`${url.replace(/\/$/, '')}/models`, { headers: { 'Content-Type': 'application/json', ...(apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {}) } });
+        const cleanUrl = url.replace(/\/$/, '');
+        const response = await fetch(`${cleanUrl}/models`, { 
+            headers: { 
+                'Content-Type': 'application/json', 
+                ...(apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {}) 
+            } 
+        });
         if (!response.ok) return 'offline';
         const data = await response.json();
         return (data.data || []).some((m: any) => String(m.id).includes(modelName)) ? 'ready' : 'online';

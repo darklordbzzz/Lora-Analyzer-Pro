@@ -154,7 +154,7 @@ const App: React.FC = () => {
       const newResults = analysisResults.filter(r => r.id !== id);
       setAnalysisResults(newResults);
       localStorage.setItem(SAVED_RESULTS_KEY, JSON.stringify(newResults));
-  }
+}
 
   const handleAnalyzeBatch = useCallback(async () => {
     if (loraFiles.length === 0) { fileUploadRef.current?.openFileDialog(); return; }
@@ -189,7 +189,7 @@ const App: React.FC = () => {
     }
   }, [loraFiles, llmModels, selectedLlmModelId, autoSave]);
 
-  const activeModel = llmModels.find(m => m.id === selectedLlmModelId);
+  const activeModel = useMemo(() => llmModels.find(m => m.id === selectedLlmModelId), [llmModels, selectedLlmModelId]);
 
   return (
     <div className="min-h-screen bg-[#0B0F1A] text-gray-100 flex flex-col font-sans selection:bg-indigo-500/30">
@@ -237,7 +237,7 @@ const App: React.FC = () => {
                     </div>
                   </div>
                   <div className="lg:col-span-9">
-                    <AnalysisResults results={analysisResults.filter(r => r.fileName.toLowerCase().includes(searchQuery.toLowerCase()))} onDelete={handleDeleteResult} onRetry={(r) => analyzeSingleFile(r.id)} canRetry={() => true} />
+                    <AnalysisResults results={analysisResults.filter(r => r.fileName.toLowerCase().includes(searchQuery.toLowerCase()))} onDelete={handleDeleteResult} onRetry={(r) => analyzeSingleFile(r.id)} canRetry={() => true} activeModel={activeModel} />
                   </div>
                 </div>
             </div>
