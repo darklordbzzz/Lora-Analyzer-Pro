@@ -1,5 +1,9 @@
 {
-  "name": "LoRA Analyzer Pro",
-  "description": "An advanced web-based tool to analyze LoRA files using AI. Upload your .safetensors files, optionally provide a preview image and metadata, and get a detailed breakdown of model type, compatibility, tags, and more.",
-  "requestFramePermissions": []
+  "name": "Multimodal AI Intelligence Hub",
+  "description": "Professional-grade multimodal tool for analyzing AI models, generating high-fidelity images, and producing studio-grade audio. Featuring native support for Pony, Illustrious, and Z-Image model families.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "display-capture"
+  ]
 }

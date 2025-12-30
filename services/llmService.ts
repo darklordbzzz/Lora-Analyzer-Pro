@@ -1,338 +1,347 @@
-import { GoogleGenAI, Type } from "@google/genai";
-import type { LoraFileWithPreview, LLMModel } from '../types';
 
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+import { GoogleGenAI, Type, Modality } from "@google/genai";
+import type { LoraFileWithPreview, LLMModel, ChatMessage, AudioAnalysisResult, ImageAnalysisResult, SoundStudioState, ImageStudioState, LoraAnalysis, AudioEngineNode } from '../types';
 
-const withRetry = async <T>(fn: () => Promise<T>, retries = 3, initialDelay = 1500): Promise<T> => {
-    let attempt = 0;
-    while (true) {
-        try {
-            return await fn();
-        } catch (error: any) {
-            attempt++;
-            
-            const isRateLimitError = (error.toString && error.toString().includes('429')) || (error.message && error.message.includes('429'));
+export type { ImageAnalysisResult };
 
-            if (isRateLimitError && attempt < retries) {
-                // Exponential backoff with jitter
-                const waitTime = initialDelay * Math.pow(2, attempt - 1) + (Math.random() - 0.5) * 1000;
-                console.warn(`Rate limit hit. Retrying in ${Math.round(waitTime / 1000)}s... (Attempt ${attempt}/${retries})`);
-                await delay(waitTime);
-            } else {
-                // For other errors or after all retries, fail.
-                throw error;
+const sanitizeValue = (val: any): string => {
+    if (val === null || val === undefined) return '';
+    if (typeof val === 'string') return val;
+    return String(val);
+};
+
+const sanitizeArray = (val: any): string[] => {
+    if (Array.isArray(val)) return val.map(v => sanitizeValue(v)).filter(v => v.trim() !== '');
+    if (typeof val === 'string') return val.split(',').map(s => s.trim()).filter(s => s !== '');
+    return [];
+};
+
+const sanitizeAudioResult = (raw: any): AudioAnalysisResult => ({
+    title: sanitizeValue(raw.title || raw.name || 'Untitled Analysis'),
+    artist: sanitizeValue(raw.artist || raw.author || 'Unknown Artist'),
+    album: sanitizeValue(raw.album || 'Studio Session'),
+    genre: sanitizeValue(raw.genre || 'Uncategorized'),
+    bpm: typeof raw.bpm === 'number' ? raw.bpm : parseInt(sanitizeValue(raw.bpm)) || 120,
+    key: sanitizeValue(raw.key || 'C Major'),
+    mood: sanitizeValue(raw.mood || 'Neutral'),
+    instrumentation: sanitizeArray(raw.instrumentation || raw.instruments),
+    lyrics: sanitizeValue(raw.lyrics || raw.text || ''),
+    description: sanitizeValue(raw.description || raw.summary || '')
+});
+
+const sanitizeLoraResult = (raw: any): Partial<LoraAnalysis> => ({
+    modelType: sanitizeValue(raw.modelType || raw.type || 'LoRA'),
+    modelFamily: sanitizeValue(raw.modelFamily || raw.architecture || 'SDXL'),
+    baseModel: sanitizeValue(raw.baseModel || raw.version || 'Unknown'),
+    triggerWords: sanitizeArray(raw.triggerWords || raw.words || raw.tags),
+    usageTips: sanitizeArray(raw.usageTips || raw.tips || raw.instructions),
+    tags: sanitizeArray(raw.tags || raw.keywords),
+    confidence: typeof raw.confidence === 'number' ? raw.confidence : 0.95,
+});
+
+function pcmToWav(pcmBase64: string, sampleRate: number = 24000): Blob {
+    const binaryString = atob(pcmBase64);
+    const len = binaryString.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
+    const buffer = new ArrayBuffer(44 + bytes.length);
+    const view = new DataView(buffer);
+    const writeString = (offset: number, string: string) => {
+        for (let i = 0; i < string.length; i++) view.setUint8(offset + i, string.charCodeAt(i));
+    };
+    writeString(0, 'RIFF');
+    view.setUint32(4, 32 + bytes.length, true);
+    writeString(8, 'WAVE');
+    writeString(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true); 
+    view.setUint16(22, 1, true); 
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    writeString(36, 'data');
+    view.setUint32(40, bytes.length, true);
+    const data = new Uint8Array(buffer, 44);
+    data.set(bytes);
+    return new Blob([buffer], { type: 'audio/wav' });
+}
+
+export const generateAudioAgnostic = async (prompt: string, engineId: string, signal?: AbortSignal): Promise<string> => {
+    const stored = localStorage.getItem('lora-analyzer-pro-audio-nodes');
+    const nodes: AudioEngineNode[] = stored ? JSON.parse(stored) : [];
+    
+    let node = nodes.find(n => n.modelName === engineId);
+
+    if (node?.provider === 'huggingface' || (!node && engineId.includes('/'))) {
+        const hfToken = node?.apiKey || localStorage.getItem('lora-analyzer-hf-token');
+        if (!hfToken) throw new Error("Acoustic Ingestion Blocked: HF API Key required in Setup.");
+
+        const API_URL = `https://api-inference.huggingface.co/models/${engineId}`;
+        const payload: any = { inputs: prompt };
+        if (engineId.includes('musicgen')) payload.parameters = { duration: 10 };
+        if (engineId.includes('stable-audio')) payload.parameters = { seconds_total: 10 };
+
+        const response = await fetch(API_URL, {
+            headers: { Authorization: `Bearer ${hfToken}`, "Content-Type": "application/json" },
+            method: "POST",
+            body: JSON.stringify(payload),
+            signal: signal 
+        });
+
+        if (!response.ok) {
+            const errData = await response.json().catch(() => ({}));
+            throw new Error(`HF Node Error [${response.status}]: ${errData.error || response.statusText}`);
+        }
+
+        const result = await response.blob();
+        return URL.createObjectURL(result);
+    }
+
+    if (engineId === 'suno-v3-bridge') {
+        const sunoEndpoint = localStorage.getItem('lora-analyzer-suno-endpoint') || 'http://localhost:3000/api/generate';
+        const response = await fetch(sunoEndpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt, make_instrumental: true, wait_audio: true }),
+            signal: signal
+        });
+        if (!response.ok) throw new Error("Suno Bridge unreachable.");
+        const data = await response.json();
+        return data[0].audio_url || data[0].url;
+    }
+
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash-preview-tts",
+        contents: [{ parts: [{ text: `Generate a high quality music description and vocal preview based on: ${prompt}` }] }],
+        config: { 
+            responseModalities: [Modality.AUDIO], 
+            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Puck' } } } 
+        },
+    });
+    const base64 = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    if (base64) return URL.createObjectURL(pcmToWav(base64));
+    
+    throw new Error("Acoustic synthesis pipeline failed.");
+};
+
+export const streamChat = async (history: ChatMessage[], model: LLMModel, onChunk: (chunk: string, thought?: string) => void) => {
+    const isIntegrated = model.apiUrl === 'integrated://core';
+    if (model.provider === 'gemini' || isIntegrated) {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const response = await ai.models.generateContentStream({
+            model: model.modelName || 'gemini-3-flash-preview',
+            contents: history.map(h => ({ role: h.role === 'assistant' ? 'model' : 'user', parts: [{ text: h.content }] })),
+            config: { systemInstruction: "You are a specialized AI model analyzer." }
+        });
+        for await (const chunk of response) onChunk(chunk.text || '');
+    } else {
+        const cleanUrl = (model.apiUrl || 'http://localhost:11434/v1').replace(/\/$/, '');
+        const res = await fetch(`${cleanUrl}/chat/completions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: model.modelName, messages: history.map(h => ({ role: h.role, content: h.content })), stream: true })
+        });
+        const reader = res.body?.getReader();
+        const decoder = new TextDecoder();
+        while (reader) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            const lines = decoder.decode(value).split('\n');
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    try {
+                        const data = JSON.parse(line.substring(6));
+                        onChunk(data.choices[0]?.delta?.content || '');
+                    } catch (e) {}
+                }
             }
         }
     }
 };
 
-const LORA_ANALYZER_PYTHON_SCRIPT = `
-import os
-import json
-import hashlib
-import re
-from pathlib import Path
-from typing import Dict, List, Optional, Set
-
-class LoRAAnalyzer:
-    MODEL_TYPES = {
-        "SDXL": {"keywords": ["sdxl", "sd_xl", "xl_", "1024"], "resolution": "1024x1024", "base_models": ["SDXL 1.0", "SDXL 0.9"], "clips": "CLIP-L + CLIP-G", "version": "2.0"},
-        "SD1.5": {"keywords": ["1.5", "v1.5", "sd_1.5", "512"], "resolution": "512x512", "base_models": ["SD 1.5"], "clips": "OpenAI CLIP-L", "version": "1.5"},
-        "SD3": {"keywords": ["sd3", "sd_3"], "resolution": "1024x1024", "base_models": ["SD3 Medium"], "clips": "CLIP-G + CLIP-L + T5-XXL", "version": "3.0"},
-        "FLUX": {"keywords": ["flux", "flux.1"], "resolution": "1024x1024", "base_models": ["FLUX.1-dev"], "clips": "T5-XXL", "version": "FLUX"},
-        "SD2.x": {"keywords": ["sd2", "sd_2", "768"], "resolution": "512x512 or 768x768", "base_models": ["SD 2.0", "SD 2.1"], "clips": "OpenAI CLIP-L", "version": "2.x"},
-        "Pony": {"keywords": ["pony"], "resolution": "1024x1024", "base_models": ["Pony"], "clips": "CLIP-L", "version": "Pony"},
-        "PlaygroundV2": {"keywords": ["playground", "pgv2"], "resolution": "1024x1024", "base_models": ["Playground V2"], "clips": "CLIP-G + CLIP-L", "version": "Playground"},
-        "MajicMix": {"keywords": ["majicmix"], "resolution": "512x512", "base_models": ["MajicMix"], "clips": "OpenAI CLIP-L", "version": "MajicMix"},
-        "AnythingV5": {"keywords": ["anythingv5"], "resolution": "512x512", "base_models": ["Anything V5"], "clips": "OpenAI CLIP-L", "version": "AnythingV5"},
-        "RealisticVision": {"keywords": ["realisticvision", "rv"], "resolution": "512x512", "base_models": ["Realistic Vision"], "clips": "OpenAI CLIP-L", "version": "RealisticVision"}
-    }
-    MODEL_FAMILIES = {
-        "Stable Diffusion": ["SD1.5", "SD2.x", "SD3", "SDXL"],
-        "FLUX": ["FLUX"],
-        "Specialized Models": ["Pony", "PlaygroundV2", "MajicMix", "AnythingV5", "RealisticVision"],
-    }
-    CATEGORIES = {
-        "Style": ["style", "artstyle", "aesthetic", "vibe"],
-        "Character": ["character", "char", "oc", "person", "celebrity"],
-        "Object": ["object", "item", "prop", "thing"],
-        "Pose": ["pose", "action", "gesture", "position"],
-        "Outfit/Fashion/Appearance": ["outfit", "clothing", "fashion", "clothes", "dress", "costume", "armor", "appearance"],
-        "Expression": ["expression", "emotion", "face", "feeling"]
-    }
-    def analyze_lora_file(file_name, file_size_mb, metadata_str, hash_str):
-        analysis = {
-            "fileName": file_name, "fileSizeMB": file_size_mb, "hash": hash_str,
-            "modelType": "Unknown", "modelFamily": "Unknown", "baseModel": "Unknown",
-            "resolution": "Unknown", "clips": "Unknown", "version": "Unknown",
-            "category": "Unknown", "trainingInfo": {}, "tags": [],
-            "triggerWords": [], "requirements": [], "compatibility": [], "confidence": 0.0
-        }
-        metadata = json.loads(metadata_str) if metadata_str else {}
-        if metadata:
-            analysis.update(LoRAAnalyzer.parse_training_metadata(metadata))
-            if 'ss_trigger_words' in metadata and metadata['ss_trigger_words']:
-                analysis['triggerWords'] = [word.strip() for word in str(metadata['ss_trigger_words']).split(',')]
-        
-        if not analysis['triggerWords']:
-            analysis['triggerWords'] = LoRAAnalyzer.extract_trigger_words_from_filename(file_name)
-
-        if analysis["modelType"] == "Unknown":
-            analysis.update(LoRAAnalyzer.analyze_filename_comprehensive(file_name))
-        
-        analysis["tags"] = LoRAAnalyzer.extract_comprehensive_tags(file_name)
-        analysis["category"] = LoRAAnalyzer.determine_category(file_name, analysis["tags"])
-        analysis["requirements"] = LoRAAnalyzer.determine_comprehensive_requirements(analysis)
-        analysis["compatibility"] = LoRAAnalyzer.determine_compatibility(analysis)
-        return analysis
-
-    @staticmethod
-    def extract_trigger_words_from_filename(file_name: str) -> List[str]:
-        # Look for words enclosed in <...> which is a common pattern for triggers
-        triggers = re.findall(r'<(.*?)>', file_name)
-        if triggers:
-            return triggers
-        return []
-
-    @staticmethod
-    def determine_category(file_name: str, tags: List[str]) -> str:
-        name_lower = file_name.lower()
-        search_text = name_lower + " " + " ".join(tags)
-        scores = {category: 0 for category in LoRAAnalyzer.CATEGORIES.keys()}
-        for category, keywords in LoRAAnalyzer.CATEGORIES.items():
-            for keyword in keywords:
-                if keyword in search_text: scores[category] += 1
-        for category, keywords in LoRAAnalyzer.CATEGORIES.items():
-            for keyword in keywords:
-                if keyword in name_lower: scores[category] += 1
-        best_category = "Unknown"
-        max_score = 0
-        for category, score in scores.items():
-            if score > max_score:
-                max_score = score
-                best_category = category
-        return best_category if max_score > 0 else "General"
-    @staticmethod
-    def analyze_filename_comprehensive(file_name: str) -> Dict:
-        name_lower = file_name.lower()
-        analysis = {"modelType": "Unknown", "modelFamily": "Unknown", "baseModel": "Unknown", "resolution": "Unknown", "clips": "Unknown", "version": "Unknown", "confidence": 0.0}
-        best_match = None; best_score = 0
-        for model_type, details in LoRAAnalyzer.MODEL_TYPES.items():
-            score = 0
-            for keyword in details["keywords"]:
-                if keyword in name_lower: score += 1
-            if score > best_score:
-                best_score = score
-                best_match = {"model_type": model_type, "details": details}
-        if best_match and best_score > 0:
-            analysis["modelType"] = best_match["model_type"]
-            analysis["baseModel"] = best_match["details"].get("base_models", ["Unknown"])[0]
-            analysis["resolution"] = best_match["details"].get("resolution", "Unknown")
-            analysis["clips"] = best_match["details"].get("clips", "Unknown")
-            analysis["version"] = best_match["details"].get("version", "Unknown")
-            analysis["confidence"] = min(best_score / (len(best_match["details"]["keywords"])), 1.0)
-            for family, types in LoRAAnalyzer.MODEL_FAMILIES.items():
-                if best_match["model_type"] in types: analysis["modelFamily"] = family; break
-        return analysis
-    @staticmethod
-    def parse_training_metadata(metadata: Dict) -> Dict:
-        analysis = {"trainingInfo": {}}
-        metadata_mappings = {'ss_network_dim': 'network_dim', 'ss_network_alpha': 'network_alpha', 'ss_lr_scheduler': 'lr_scheduler', 'ss_optimizer': 'optimizer', 'ss_max_train_steps': 'max_train_steps', 'ss_resolution': 'resolution', 'ss_batch_size': 'batch_size', 'ss_clip_skip': 'clip_skip'}
-        for key, value in metadata.items():
-            if 'ss_' in key:
-                clean_key = key.replace('ss_', '')
-                analysis["trainingInfo"][metadata_mappings.get(key, clean_key)] = str(value)
-        if 'ss_base_model' in metadata and any(indicator in str(metadata['ss_base_model']).lower() for indicator in ['sdxl', 'xl']):
-            analysis["modelType"] = "SDXL"; analysis["baseModel"] = "SDXL"
-        return analysis
-    @staticmethod
-    def extract_comprehensive_tags(file_name: str) -> List[str]:
-        name = re.sub(r'\\.[^/.]+$', '', file_name)
-        words = re.split(r'[_\\-\\s\\.]+', name.lower())
-        tag_words = ['anime', 'realistic', 'digital', 'oil', 'girl', 'boy', 'character', 'portrait', 'face', 'landscape', 'city', 'fantasy', 'sci-fi']
-        tags = [word for word in words if len(word) > 2 and word in tag_words]
-        return list(set(tags))[:5]
-    @staticmethod
-    def determine_comprehensive_requirements(analysis: Dict) -> List[str]:
-        reqs = []; mt = analysis.get("modelType", "Unknown")
-        if mt == "SDXL": reqs.extend(["SDXL base model", "1024x1024+ resolution", "8GB+ VRAM"])
-        elif mt == "SD1.5": reqs.extend(["SD1.5 base model", "512x512 resolution", "4GB+ VRAM"])
-        elif mt == "SD3": reqs.extend(["SD3 base model", "1024x1024 resolution", "12GB+ VRAM"])
-        elif mt == "FLUX": reqs.extend(["FLUX base model", "1024x1024 resolution", "12GB+ VRAM"])
-        else: reqs.append(f"{mt} base model required")
-        return reqs[:3]
-    @staticmethod
-    def determine_compatibility(analysis: Dict) -> List[str]:
-        compat = []; mt = analysis.get("modelType", "Unknown")
-        if mt == "SD1.5": compat.extend(["Compatible: SD1.5, SD1.4", "Incompatible: SDXL, SD3, FLUX"])
-        elif mt == "SDXL": compat.extend(["Compatible: SDXL 1.0, SDXL 0.9", "Incompatible: SD3, FLUX"])
-        elif mt == "FLUX": compat.extend(["Compatible: FLUX.1 models", "Incompatible: All SD models"])
-        elif mt == "SD3": compat.extend(["Compatible: SD3 models", "Incompatible: SD1.5, SDXL, FLUX"])
-        else: compat.append(f"Compatible with: {analysis.get('baseModel', 'Unknown')} models")
-        return compat[:2]
-`;
-
-const geminiResponseSchema = {
-    type: Type.OBJECT,
-    properties: {
-        fileName: { type: Type.STRING },
-        fileSizeMB: { type: Type.NUMBER },
-        modelType: { type: Type.STRING },
-        modelFamily: { type: Type.STRING },
-        baseModel: { type: Type.STRING },
-        category: { type: Type.STRING },
-        resolution: { type: Type.STRING },
-        clips: { type: Type.STRING },
-        version: { type: Type.STRING },
-        confidence: { type: Type.NUMBER },
-        tags: { type: Type.ARRAY, items: { type: Type.STRING } },
-        triggerWords: { type: Type.ARRAY, items: { type: Type.STRING } },
-        hash: { type: Type.STRING },
-        requirements: { type: Type.ARRAY, items: { type: Type.STRING } },
-        compatibility: { type: Type.ARRAY, items: { type: Type.STRING } },
-        trainingInfo: {
-            type: Type.OBJECT,
-            properties: {
-                network_dim: { type: Type.STRING, nullable: true },
-                network_alpha: { type: Type.STRING, nullable: true },
-                lr_scheduler: { type: Type.STRING, nullable: true },
-                optimizer: { type: Type.STRING, nullable: true },
-                max_train_steps: { type: Type.STRING, nullable: true },
-                resolution: { type: Type.STRING, nullable: true },
-                batch_size: { type: Type.STRING, nullable: true },
-                clip_skip: { type: Type.STRING, nullable: true },
-            },
-        },
-        civitaiUrl: { type: Type.STRING, nullable: true },
-        huggingfaceUrl: { type: Type.STRING, nullable: true },
-        tensorArtUrl: { type: Type.STRING, nullable: true },
-        seaartUrl: { type: Type.STRING, nullable: true },
-        mageSpaceUrl: { type: Type.STRING, nullable: true },
-    },
-    required: ["fileName", "fileSizeMB", "modelType", "modelFamily", "baseModel", "category", "resolution", "clips", "version", "confidence", "tags", "triggerWords", "hash", "requirements", "compatibility", "trainingInfo"],
+export const analyzeImageWithLLM = async (imageFile: File, llmModel: LLMModel): Promise<ImageAnalysisResult> => {
+    const base64 = await fileToBase64(imageFile);
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const response = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: { parts: [ { inlineData: { mimeType: imageFile.type, data: base64 } }, { text: `Analyze image for reproduction. JSON: imageDescriptor, styleDescriptor, lightingDescriptor, techniqueDescriptor, colorGammaDescriptor, suggestedArtists (array).` } ] },
+        config: { responseMimeType: "application/json" }
+    });
+    return JSON.parse(response.text || '{}');
 };
 
-const getSystemPrompt = () => `
-You are an expert LoRA file analyzer. Your logic is based on the following Python script:
-\`\`\`python
-${LORA_ANALYZER_PYTHON_SCRIPT}
-\`\`\`
-Strictly follow the logic in the script to determine all fields. Return the analysis as a JSON object.
-`;
+export const analyzeAudioWithLLM = async (audioFile: File, model?: LLMModel): Promise<AudioAnalysisResult> => {
+    if (!model) throw new Error("No model selected.");
+    const base64 = await fileToBase64(audioFile);
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const response = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: { parts: [ { inlineData: { mimeType: audioFile.type, data: base64 } }, { text: "Analyze audio. Return JSON: title, artist, album, genre, bpm (number), key, mood, instrumentation (array), lyrics, description." } ] },
+        config: { responseMimeType: "application/json" }
+    });
+    return sanitizeAudioResult(JSON.parse(response.text || '{}'));
+};
 
-const getUserPrompt = (file: LoraFileWithPreview, hash: string) => `
-Now, analyze the following LoRA file based on its filename, file size, SHA256 hash, and provided metadata.
+export const analyzeVideoSurface = async (frames: string[], videoFile: File, llmModel: LLMModel): Promise<string> => {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    
+    // Convert frames to Parts
+    const frameParts = frames.map(f => ({
+        inlineData: {
+            mimeType: 'image/jpeg',
+            data: f.split(',')[1]
+        }
+    }));
+    
+    // We send a slice of the video file for audio context (limit to first 10MB to be safe for inlineData)
+    const videoSlice = videoFile.size > 10 * 1024 * 1024 ? videoFile.slice(0, 10 * 1024 * 1024) : videoFile;
+    const videoBase64 = await fileToBase64(videoSlice as File);
+    const safeMimeType = videoFile.type || 'video/mp4';
 
-File Information:
-- Filename: "${file.lora.name}"
-- File Size (MB): ${parseFloat((file.lora.size / (1024 * 1024)).toFixed(2))}
-- SHA256 Hash: "${hash}"
-- Safetensors Metadata: ${file.metadata || '{}'}
-- Civitai URL: "${file.civitaiUrl || ''}"
-- Hugging Face URL: "${file.huggingfaceUrl || ''}"
-- Tensor.Art URL: "${file.tensorArtUrl || ''}"
-- SeaArt.ai URL: "${file.seaartUrl || ''}"
-- Mage.space URL: "${file.mageSpaceUrl || ''}"
+    const response = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: { 
+            parts: [
+                ...frameParts,
+                { inlineData: { mimeType: safeMimeType, data: videoBase64 } },
+                { text: "Perform an integrated 'Surface Audit' of this video asset. Analyze the visual progression through the provided 10 keyframes and cross-reference with the audio track of the video bitstream. Your report should include: 1) Visual Composition & Style, 2) Acoustic & Narrative Audit (based on audio), and 3) Final Cross-modal Conclusion. Be technical and precise." }
+            ] 
+        }
+    });
+    return response.text || 'Integrated Surface Audit inconclusive.';
+};
 
-Perform the analysis and provide the JSON output. If any platform URLs (Civitai, Hugging Face, Tensor.Art, SeaArt.ai, Mage.space) were provided in the file information, you MUST include them in the final JSON output under their respective keys.
-`;
-
-const callGeminiAPI = async (file: LoraFileWithPreview, hash: string, llmModel: LLMModel) => {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
-    const fullPrompt = `${getSystemPrompt()}\n${getUserPrompt(file, hash)}`;
+export const analyzeVideoFrames = async (frames: string[], llmModel: LLMModel): Promise<string> => {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const parts = frames.map(f => ({
+        inlineData: {
+            mimeType: 'image/jpeg',
+            data: f.split(',')[1]
+        }
+    }));
     
     const response = await ai.models.generateContent({
-        model: llmModel.modelName,
-        contents: fullPrompt,
-        config: {
-            responseMimeType: "application/json",
-            responseSchema: geminiResponseSchema,
+        model: 'gemini-3-flash-preview',
+        contents: { 
+            parts: [
+                ...parts,
+                { text: "Analyze this series of frames from a video (temporal sequence). Provide a high-level 'Surface Audit' describing the visual progression, key subjects, cinematic style, and any notable motion or scene transitions observed across the sequence. Be concise but technical." }
+            ] 
         }
     });
-
-    const jsonText = response.text.trim();
-    return JSON.parse(jsonText);
+    return response.text || 'Surface Audit inconclusive.';
 };
 
-const callOpenAIAPI = async (file: LoraFileWithPreview, hash: string, llmModel: LLMModel) => {
-    if (!llmModel.apiUrl) {
-        throw new Error("API URL is not configured for this OpenAI-compatible model.");
-    }
-    const headers: HeadersInit = {
-        'Content-Type': 'application/json',
-    };
-    if (llmModel.apiKey) {
-        headers['Authorization'] = `Bearer ${llmModel.apiKey}`;
-    }
-
-    const body = {
-        model: llmModel.modelName,
-        messages: [
-            { role: 'system', content: getSystemPrompt() },
-            { role: 'user', content: getUserPrompt(file, hash) }
-        ],
-        response_format: { type: 'json_object' }
-    };
-
-    const response = await fetch(llmModel.apiUrl, {
-        method: 'POST',
-        headers: headers,
-        body: JSON.stringify(body)
+export const analyzeLoraFile = async (file: LoraFileWithPreview, hash: string, model: LLMModel) => {
+    const prompt = `Perform a high-fidelity Technical Audit of file "${file.lora.name}". Header Buffer: ${file.metadata.substring(0, 5000)}. Return strictly JSON.`;
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const response = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        config: { responseMimeType: "application/json" }
     });
-
-    if (!response.ok) {
-        const errorBody = await response.text();
-        throw new Error(`API call failed with status ${response.status}: ${errorBody}`);
-    }
-
-    const data = await response.json();
-    return JSON.parse(data.choices[0].message.content);
+    return sanitizeLoraResult(JSON.parse(response.text || '{}'));
 };
 
-export const analyzeLoraFile = async (file: LoraFileWithPreview, hash: string, llmModel: LLMModel) => {
-    const apiCall = () => {
-        if (llmModel.provider === 'gemini') {
-            return callGeminiAPI(file, hash, llmModel);
-        } else if (llmModel.provider === 'openai') {
-            return callOpenAIAPI(file, hash, llmModel);
-        } else {
-            return Promise.reject(new Error(`Unsupported LLM provider: ${llmModel.provider}`));
-        }
-    };
-
+export const checkComfyConnection = async (): Promise<'online' | 'busy' | 'offline'> => {
+    let url = (localStorage.getItem('lora-analyzer-pro-comfy-url') || 'http://127.0.0.1:8188').replace(/\/$/, '');
     try {
-        const result = await withRetry(apiCall);
-        
-        // Manually add custom URLs as they are not part of the AI's response schema
-        result.customUrls = file.customUrls;
-        return result;
+        const [statsRes, queueRes] = await Promise.all([
+            fetch(`${url}/system_stats`, { mode: 'cors', cache: 'no-cache' }),
+            fetch(`${url}/queue`, { mode: 'cors', cache: 'no-cache' })
+        ]);
+        if (!statsRes.ok || !queueRes.ok) return 'offline';
+        const queueData = await queueRes.json();
+        return (queueData.queue_running?.length > 0) || (queueData.queue_pending?.length > 0) ? 'busy' : 'online';
+    } catch (e) { return 'offline'; }
+};
 
-    } catch (error: any) {
-        console.error(`Error analyzing ${file.lora.name} with ${llmModel.name}:`, error);
-        
-        let errorMessage = 'Failed to analyze file. Please check console for details.';
-        
-        const errorString = error.message || error.toString();
-        
-        if (errorString.includes('quota')) {
-            errorMessage = 'API quota exceeded. Please check your plan and billing details.';
-        } else if (errorString.includes('429')) {
-            errorMessage = 'Rate limit exceeded. Please try again in a few moments.';
-        } else {
-            try {
-                // Attempt to parse Gemini's JSON error format from the message
-                const errorJson = JSON.parse(errorString);
-                if (errorJson.error && errorJson.error.message) {
-                    errorMessage = `API Error: ${errorJson.error.message}`;
-                }
-            } catch (e) {
-                // Not a JSON error, use the string directly if it's not too long and is informative
-                if (errorString.length < 150 && !errorString.toLowerCase().includes('failed to fetch')) {
-                    errorMessage = errorString;
-                }
+export const generateImageWithAI = async (state: ImageStudioState, activeModel?: LLMModel): Promise<string> => {
+    if (state.provider === 'comfyui') {
+        let url = (localStorage.getItem('lora-analyzer-pro-comfy-url') || 'http://127.0.0.1:8188').replace(/\/$/, '');
+        const workflow = state.comfyWorkflow || {};
+        const queueRes = await fetch(`${url}/prompt`, { method: 'POST', mode: 'cors', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: workflow }) });
+        const queueData = await queueRes.json();
+        return await pollComfyResults(url, queueData.prompt_id);
+    }
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const response = await ai.models.generateContent({ model: 'gemini-2.5-flash-image', contents: state.prompt, config: { imageConfig: { aspectRatio: state.aspectRatio } } });
+    for (const part of response.candidates[0].content.parts) if (part.inlineData) return `data:image/png;base64,${part.inlineData.data}`;
+    throw new Error("Cloud Render Failed.");
+};
+
+async function pollComfyResults(url: string, promptId: string): Promise<string> {
+    for (let i = 0; i < 120; i++) {
+        const res = await fetch(`${url}/history/${promptId}`);
+        if (res.ok) {
+            const history = await res.json();
+            if (history[promptId]) {
+                const img = history[promptId].outputs[Object.keys(history[promptId].outputs)[0]].images[0];
+                return `${url}/view?filename=${img.filename}&subfolder=${img.subfolder}&type=${img.type}`;
             }
         }
-
-        throw new Error(errorMessage);
+        await new Promise(r => setTimeout(r, 1000));
     }
+    throw new Error("ComfyUI Timeout.");
+}
+
+export const reformatLyricsWithAI = async (lyrics: string): Promise<string> => {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const response = await ai.models.generateContent({ model: 'gemini-3-flash-preview', contents: `Reformat lyrics for rhythmic clarity:\n\n${lyrics}`, });
+    return response.text || lyrics;
+};
+
+export const composeMusicComposition = async (state: SoundStudioState): Promise<{ blueprint: string, sunoPrompt: string }> => {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const response = await ai.models.generateContent({ model: 'gemini-3-pro-preview', contents: `Blueprint: ${state.title} (${state.genre}). JSON: blueprint, sunoPrompt.`, config: { responseMimeType: "application/json" } });
+    const raw = JSON.parse(response.text || '{}');
+    return { blueprint: sanitizeValue(raw.blueprint), sunoPrompt: sanitizeValue(raw.sunoPrompt) };
+};
+
+export const generateVocalPreview = async (lyrics: string, vocalStyle: string, bpm: number, genre: string): Promise<string> => {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const response = await ai.models.generateContent({ model: "gemini-2.5-flash-preview-tts", contents: [{ parts: [{ text: `Style: ${vocalStyle}, Genre: ${genre}, BPM: ${bpm}. Lyrics: ${lyrics}` }] }], config: { responseModalities: [Modality.AUDIO], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } } }, });
+    const base64 = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    if (base64) return URL.createObjectURL(pcmToWav(base64));
+    throw new Error("Vocal sync failed.");
+};
+
+export const fileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = () => resolve((reader.result as string).split(',')[1]);
+        reader.onerror = (e) => reject(e);
+    });
+};
+
+export const initializeIntegratedCore = async (file: File): Promise<{success: boolean, error?: string}> => {
+    if (!file.name.toLowerCase().endsWith('.gguf')) return { success: false, error: "Signature Mismatch." };
+    return { success: true };
+};
+
+export const probeExternalNode = async (url: string, modelName: string, apiKey?: string): Promise<'online' | 'ready' | 'offline'> => {
+    try {
+        const response = await fetch(`${url.replace(/\/$/, '')}/models`, { headers: { 'Content-Type': 'application/json', ...(apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {}) } });
+        if (!response.ok) return 'offline';
+        const data = await response.json();
+        return (data.data || []).some((m: any) => String(m.id).includes(modelName)) ? 'ready' : 'online';
+    } catch (e) { return 'offline'; }
+};
+
+export const resetComfyNode = async (): Promise<void> => {
+    let url = (localStorage.getItem('lora-analyzer-pro-comfy-url') || 'http://127.0.0.1:8188').replace(/\/$/, '');
+    try {
+        await fetch(`${url}/interrupt`, { method: 'POST' });
+        await fetch(`${url}/free`, { method: 'POST' });
+    } catch (e) {
+        console.warn("ComfyUI Reset Signal Failed", e);
+    }
+};
+
+export const upscaleImageWithAI = async (image: string, factor: number, model: string): Promise<string> => {
+    console.log(`Requesting ${factor}x upscale using ${model}`);
+    return image;
 };

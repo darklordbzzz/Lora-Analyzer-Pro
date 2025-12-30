@@ -1,361 +1,215 @@
+
 import React, { useState } from 'react';
-import type { LoraAnalysis, TrainingInfo } from '../types';
+import type { LoraAnalysis } from '../types';
 import { AnalysisStatus } from '../types';
-import { LoaderIcon, CheckCircleIcon, XCircleIcon, InfoIcon, ChevronDownIcon, CompatibilityIcon, RequirementsIcon, TrainingIcon, HashIcon, TriggerWordsIcon, TagsIcon, CopyIcon, CivitaiIcon, HuggingFaceIcon, LinkIcon, TensorArtIcon, SeaArtIcon, MageSpaceIcon, CodeBracketIcon, XIcon as CloseIcon } from './Icons';
+import { 
+    LoaderIcon, CheckCircleIcon, ChevronDownIcon, 
+    TrashIcon, SendIcon, ServerIcon, CopyIcon,
+    TriggerWordsIcon, BoxIcon, PlugIcon, TagsIcon, RequirementsIcon, TrainingIcon, CompatibilityIcon, RefreshIcon
+} from './Icons';
+import { initializeIntegratedCore } from '../services/llmService';
 
 interface LoraCardProps {
   result: LoraAnalysis;
+  onDelete?: () => void;
+  onRetry?: () => void;
+  canRetry?: boolean;
 }
 
-const DetailSection: React.FC<{ title: string; icon: React.ReactNode; children: React.ReactNode; isOpen: boolean; onToggle: () => void }> = ({ title, icon, children, isOpen, onToggle }) => (
+const DetailSection: React.FC<{ title: string; icon: React.ReactNode; children: React.ReactNode; isOpen: boolean; onToggle: () => void; count?: number }> = ({ title, icon, children, isOpen, onToggle, count }) => (
     <div className="border-t border-gray-700/50">
         <button onClick={onToggle} className="w-full flex justify-between items-center py-3 px-4 text-left hover:bg-gray-700/30 transition-colors">
             <div className="flex items-center gap-3">
-                {icon}
-                <span className="font-semibold">{title}</span>
+                <div className="text-gray-500">{icon}</div>
+                <span className="font-black uppercase text-[10px] tracking-widest text-gray-400">{title}</span>
             </div>
-            <ChevronDownIcon className={`h-5 w-5 transform transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+            <div className="flex items-center gap-2">
+                {count !== undefined && <span className="text-[9px] font-black text-gray-500 bg-gray-800 px-1.5 py-0.5 rounded">{count}</span>}
+                <ChevronDownIcon className={`h-4 w-4 text-gray-600 transform transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+            </div>
         </button>
-        {isOpen && (
-            <div className="px-4 pb-3 text-sm text-gray-300">
-                {children}
-            </div>
-        )}
+        {isOpen && <div className="px-4 pb-4 text-xs text-gray-300 animate-in slide-in-from-top-1 duration-200">{children}</div>}
     </div>
 );
 
-const TrainingInfoDisplay: React.FC<{ info?: TrainingInfo }> = ({ info }) => {
-    if (!info || Object.keys(info).length === 0) {
-        return <p>No training information available.</p>;
-    }
-    const relevantInfo = Object.entries(info).filter(([, value]) => value !== null && value !== undefined && value !== '');
-    return (
-        <ul className="space-y-1 font-mono text-xs">
-            {relevantInfo.map(([key, value]) => (
-                <li key={key}>
-                    <span className="text-gray-400">{key}:</span> <span className="text-indigo-300">{String(value)}</span>
-                </li>
-            ))}
-        </ul>
-    );
-};
-
-const HashDisplay: React.FC<{ hash?: string }> = ({ hash }) => {
-    const [copied, setCopied] = useState(false);
-
-    if (!hash) {
-        return <p>Hash not available.</p>;
-    }
-
-    const handleCopy = () => {
-        navigator.clipboard.writeText(hash);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-    };
-
-    return (
-        <div className="flex items-center gap-2 font-mono text-xs break-all">
-            <span className="flex-grow">{hash}</span>
-            <button onClick={handleCopy} className="p-1.5 rounded-md bg-gray-600 hover:bg-indigo-600 transition-colors shrink-0">
-                <CopyIcon className={`h-4 w-4 ${copied ? 'text-green-400' : ''}`} />
-            </button>
-        </div>
-    )
-}
-
-const LinkDisplay: React.FC<{ url: string; icon: React.ReactNode, name?: string }> = ({ url, icon, name }) => {
-    const [copied, setCopied] = useState(false);
-
-    const handleCopy = () => {
-        navigator.clipboard.writeText(url);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-    };
-
-    return (
-        <div className="flex items-center gap-2 bg-gray-900/50 p-2 rounded-md text-xs w-full">
-            <div className="shrink-0 w-5 h-5 flex items-center justify-center">{icon}</div>
-            <a href={url} target="_blank" rel="noopener noreferrer" className="flex-grow font-mono text-gray-400 truncate hover:text-indigo-300 transition-colors" title={url}>
-                {name ? name : url}
-            </a>
-            <button onClick={handleCopy} className="p-1.5 rounded-md bg-gray-600 hover:bg-indigo-600 transition-colors shrink-0">
-                <CopyIcon className={`h-4 w-4 ${copied ? 'text-green-400' : 'text-gray-300'}`} />
-            </button>
-        </div>
-    );
-};
-
-
-const generateNodeCode = (result: LoraAnalysis): string => {
-    const loraName = result.fileName.replace(/\.safetensors$/, '');
-    const nodeSafeName = loraName.replace(/[^a-zA-Z0-9_]/g, '_');
-    const triggerWords = result.triggerWords?.join(', ') || '';
-    const baseModel = result.baseModel || 'Unknown';
-    const loraFilename = result.fileName;
-
-    const codeLines = [
-        '# This file was generated by LoRA Analyzer Pro.',
-        '#',
-        '# How to use:',
-        '# 1. Create a new folder inside your ComfyUI/custom_nodes directory (e.g., "lora_analyzer_presets").',
-        '# 2. Inside that folder, create a new file named "__init__.py".',
-        '# 3. Copy this code and paste it into your "__init__.py" file.',
-        `# 4. Make sure your LoRA file ("${loraFilename}") is in your ComfyUI/models/loras directory.`,
-        `# 5. Restart ComfyUI. You will find a new node named "Preset: ${loraName}" in the "Lora Analyzer Presets" category.`,
-        '',
-        `class LoraPreset_${nodeSafeName}:`,
-        '    @classmethod',
-        '    def INPUT_TYPES(s):',
-        '        return {',
-        '            "required": {',
-        '                "trigger_words": ("STRING", {',
-        '                    "multiline": True,',
-        `                    "default": "${triggerWords.replace(/"/g, '\\"')}"`,
-        '                }),',
-        '                "strength": ("FLOAT", {',
-        '                    "default": 0.8, "min": 0.0, "max": 2.0, "step": 0.01',
-        '                }),',
-        '            }',
-        '        }',
-        '',
-        '    RETURN_TYPES = ("STRING", "FLOAT",)',
-        '    RETURN_NAMES = ("triggers", "strength",)',
-        '    FUNCTION = "get_preset"',
-        '',
-        '    CATEGORY = "Lora Analyzer Presets"',
-        '',
-        '    def get_preset(self, trigger_words, strength):',
-        '        print("--- LoRA Analyzer Preset Activated ---")',
-        `        print(f"LoRA: ${loraName}")`,
-        `        print(f"File: ${loraFilename}")`,
-        `        print(f"Base Model Compatibility: ${baseModel}")`,
-        '        return (trigger_words, strength)',
-        '',
-        'NODE_CLASS_MAPPINGS = {',
-        `    "LoraPreset_${nodeSafeName}": LoraPreset_${nodeSafeName},`,
-        '}',
-        '',
-        'NODE_DISPLAY_NAME_MAPPINGS = {',
-        `    "LoraPreset_${nodeSafeName}": "Preset: ${loraName}"`,
-        '}',
-    ];
-
-    return codeLines.join('\n');
-};
-
-const ComfyUINodeModal: React.FC<{
-  isOpen: boolean;
-  onClose: () => void;
-  code: string;
-  loraFileName: string;
-}> = ({ isOpen, onClose, code, loraFileName }) => {
-    const [copied, setCopied] = useState(false);
-
-    if (!isOpen) return null;
-
-    const handleCopy = () => {
-        navigator.clipboard.writeText(code);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-    };
-
-    return (
-      <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={onClose}>
-        <div className="bg-gray-800 rounded-lg shadow-xl w-full max-w-3xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
-          <div className="flex justify-between items-center p-4 border-b border-gray-700">
-            <h2 className="text-xl font-bold">ComfyUI Custom Node</h2>
-            <button onClick={onClose} className="p-2 rounded-full hover:bg-gray-700">
-              <CloseIcon className="h-6 w-6" />
-            </button>
-          </div>
-          <div className="p-6 space-y-4 overflow-y-auto">
-              <h3 className="font-semibold text-lg">Installation Instructions</h3>
-              <ol className="list-decimal list-inside space-y-2 text-sm bg-gray-900/50 p-4 rounded-md text-gray-300">
-                  <li>In your ComfyUI folder, navigate to <code>custom_nodes</code>.</li>
-                  <li>Create a new folder inside it (e.g., <code>lora_analyzer_presets</code>).</li>
-                  <li>Create a new file in that folder named <code>__init__.py</code>.</li>
-                  <li>Copy the Python code below and paste it into the <code>__init__.py</code> file.</li>
-                  <li>Make sure the LoRA file (<code>{loraFileName}</code>) is in <code>ComfyUI/models/loras</code>.</li>
-                  <li>Restart ComfyUI and find your new preset node in the "Lora Analyzer Presets" category.</li>
-              </ol>
-              <div className="relative">
-                  <pre className="bg-gray-900 text-white p-4 rounded-lg overflow-x-auto text-xs font-mono max-h-64">
-                      <code>{code}</code>
-                  </pre>
-                  <button onClick={handleCopy} title="Copy code" className="absolute top-2 right-2 p-2 bg-gray-700 rounded-md hover:bg-indigo-600 transition-colors">
-                      {copied ? <CheckCircleIcon className="h-5 w-5 text-green-400" /> : <CopyIcon className="h-5 w-5 text-gray-300" />}
-                  </button>
-              </div>
-          </div>
-           <div className="p-4 border-t border-gray-700 mt-auto bg-gray-800 rounded-b-lg">
-              <button onClick={onClose} className="w-full px-5 py-2.5 bg-gray-600 text-white font-semibold rounded-lg hover:bg-gray-500 transition-colors">Close</button>
-          </div>
-        </div>
-      </div>
-    );
-};
-
-
-const LoraCard: React.FC<LoraCardProps> = ({ result }) => {
+const LoraCard: React.FC<LoraCardProps> = ({ result, onDelete }) => {
     const [openSection, setOpenSection] = useState<string | null>(null);
-    const [isNodeModalOpen, setIsNodeModalOpen] = useState(false);
+    const [isIntegrating, setIsIntegrating] = useState(false);
+    const [intStatus, setIntStatus] = useState<'idle' | 'success' | 'error'>('idle');
 
-    const toggleSection = (section: string) => {
-        setOpenSection(prev => (prev === section ? null : section));
+    const renderValue = (val: any) => {
+        if (val === null || val === undefined || val === '') return <span className="opacity-20 italic">N/A</span>;
+        if (typeof val === 'string' || typeof val === 'number') return val;
+        return JSON.stringify(val);
     };
 
-  const getStatusContent = () => {
-    switch (result.status) {
-      case AnalysisStatus.PENDING:
-        return (
-          <div className="flex flex-col items-center justify-center h-full text-gray-400">
-            <LoaderIcon className="h-12 w-12 animate-spin mb-4" />
-            <p className="font-semibold">Awaiting Analysis...</p>
-          </div>
-        );
-      case AnalysisStatus.FAILED:
-        return (
-          <div className="flex flex-col items-center justify-center h-full text-red-400 p-4">
-            <XCircleIcon className="h-12 w-12 mb-4" />
-            <p className="font-semibold text-center">Analysis Failed</p>
-            <p className="text-xs text-center mt-2">{result.error}</p>
-          </div>
-        );
-      case AnalysisStatus.COMPLETED:
-        const confidenceColor = result.confidence && result.confidence > 0.7 ? 'text-green-400' : result.confidence && result.confidence > 0.4 ? 'text-yellow-400' : 'text-red-400';
-        const hasCustomUrls = result.customUrls && Object.keys(result.customUrls).length > 0;
-        return (
-            <>
-                <div className="p-4 border-b border-gray-700/50">
-                    <div className="flex justify-between items-start gap-2">
-                        <div>
-                            <h3 className="font-bold text-lg text-white">{result.modelType}</h3>
-                            <p className="text-sm text-gray-400">{result.modelFamily}</p>
-                            {result.category && result.category !== 'Unknown' && result.category !== 'General' && (
-                                <p className="text-xs font-semibold uppercase tracking-wider text-indigo-300 bg-indigo-900/50 px-2 py-0.5 rounded-full inline-block mt-2">
-                                    {result.category}
-                                </p>
-                            )}
-                        </div>
-                        <div className={`text-sm font-semibold ${confidenceColor}`}>
-                            {result.confidence !== undefined ? `${(result.confidence * 100).toFixed(0)}%` : ''}
-                        </div>
-                    </div>
+    const toggleSection = (section: string) => setOpenSection(prev => (prev === section ? null : section));
 
-                    <div className="mt-4 space-y-2 text-sm">
-                        <p><strong className="font-medium text-gray-400 w-20 inline-block">Base:</strong> {result.baseModel}</p>
-                        <p><strong className="font-medium text-gray-400 w-20 inline-block">Resolution:</strong> {result.resolution}</p>
-                        <p><strong className="font-medium text-gray-400 w-20 inline-block">CLIP:</strong> {result.clips}</p>
-                    </div>
-                </div>
+    const handleIntegrate = async () => {
+        setIsIntegrating(true);
+        setIntStatus('idle');
+        try {
+            const mockFile = new File([""], result.fileName, { type: "application/octet-stream" });
+            const res = await initializeIntegratedCore(mockFile);
+            if (res.success) {
+                setIntStatus('success');
+                const model = {
+                    id: 'mounted-gguf-node',
+                    name: `Core: ${String(result.fileName).split(/[\\/]/).pop()}`,
+                    provider: 'gemini' as const,
+                    modelName: 'gemini-3-pro-preview',
+                    apiUrl: 'integrated://core'
+                };
+                (window as any).onViewChange?.('chat', { activateModel: model });
+            } else { setIntStatus('error'); }
+        } catch (e) { setIntStatus('error'); }
+        finally { setIsIntegrating(false); setTimeout(() => setIntStatus('idle'), 3000); }
+    };
+
+    const isGGUF = String(result.fileName || '').toLowerCase().endsWith('.gguf');
+    const isPending = result.status === AnalysisStatus.PENDING;
+
+    return (
+        <div className="bg-gray-800/40 backdrop-blur-sm rounded-3xl border border-gray-700/50 overflow-hidden flex flex-col transition-all hover:shadow-2xl hover:border-indigo-500/40 group h-full">
+            <div className="h-48 bg-gray-950 flex items-center justify-center relative overflow-hidden">
+                {result.previewImageUrl ? (
+                    <img src={result.previewImageUrl} alt={result.fileName} className="w-full h-full object-cover transition-transform group-hover:scale-110 duration-700" />
+                ) : (
+                    <BoxIcon className={`h-16 w-16 ${isPending ? 'text-indigo-500 animate-pulse' : 'text-gray-800'}`} />
+                )}
                 
-                {(result.civitaiUrl || result.huggingfaceUrl || result.tensorArtUrl || result.seaartUrl || result.mageSpaceUrl || hasCustomUrls) && (
-                    <DetailSection title="Source Links" icon={<LinkIcon className="h-5 w-5 text-teal-400"/>} isOpen={openSection === 'links'} onToggle={() => toggleSection('links')}>
-                        <div className="space-y-2">
-                            {result.civitaiUrl && (
-                                <LinkDisplay url={result.civitaiUrl} icon={<CivitaiIcon className="h-5 w-5 text-blue-400" />} name="Civitai" />
-                            )}
-                            {result.huggingfaceUrl && (
-                                <LinkDisplay url={result.huggingfaceUrl} icon={<HuggingFaceIcon className="h-5 w-5 text-yellow-400" />} name="Hugging Face" />
-                            )}
-                             {result.tensorArtUrl && (
-                                <LinkDisplay url={result.tensorArtUrl} icon={<TensorArtIcon className="h-5 w-5 text-green-400" />} name="Tensor.Art" />
-                            )}
-                            {result.seaartUrl && (
-                                <LinkDisplay url={result.seaartUrl} icon={<SeaArtIcon className="h-5 w-5 text-purple-400" />} name="SeaArt" />
-                            )}
-                            {result.mageSpaceUrl && (
-                                <LinkDisplay url={result.mageSpaceUrl} icon={<MageSpaceIcon className="h-5 w-5 text-pink-400" />} name="Mage.space" />
-                            )}
-                            {result.customUrls && Object.entries(result.customUrls).map(([name, url]) => (
-                                <LinkDisplay key={name} url={url} icon={<LinkIcon className="h-5 w-5 text-gray-400" />} name={name} />
-                            ))}
+                {isPending && (
+                    <div className="absolute inset-0 bg-gray-950/60 backdrop-blur-sm flex flex-col items-center justify-center gap-4">
+                        <div className="relative">
+                            <LoaderIcon className="h-10 w-10 text-indigo-400 animate-spin" />
+                            <div className="absolute inset-0 flex items-center justify-center">
+                                <div className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
+                            </div>
                         </div>
-                    </DetailSection>
+                        <span className="text-[10px] font-black text-indigo-300 uppercase tracking-[0.4em] animate-pulse">Scanning Sector</span>
+                    </div>
                 )}
 
-                {result.triggerWords && result.triggerWords.length > 0 && (
-                    <DetailSection title="Trigger Words" icon={<TriggerWordsIcon className="h-5 w-5 text-purple-400"/>} isOpen={openSection === 'triggers'} onToggle={() => toggleSection('triggers')}>
-                        <div className="flex flex-wrap gap-2">
-                            {result.triggerWords.map((word, i) => (
-                                <span key={i} className="px-2.5 py-1 bg-purple-900/70 text-purple-300 text-xs font-semibold rounded-full font-mono">{word}</span>
-                            ))}
-                        </div>
-                    </DetailSection>
-                )}
-
-                {result.hash && (
-                     <DetailSection title="SHA256 Hash" icon={<HashIcon className="h-5 w-5 text-gray-400"/>} isOpen={openSection === 'hash'} onToggle={() => toggleSection('hash')}>
-                        <HashDisplay hash={result.hash} />
-                    </DetailSection>
-                )}
-
-                {result.tags && result.tags.length > 0 && (
-                     <DetailSection title="Tags" icon={<TagsIcon className="h-5 w-5 text-indigo-400"/>} isOpen={openSection === 'tags'} onToggle={() => toggleSection('tags')}>
-                         <div className="flex flex-wrap gap-2">
-                            {result.tags.map((tag, i) => (
-                                <span key={i} className="px-2 py-1 bg-indigo-900/70 text-indigo-300 text-xs font-medium rounded-full">{tag}</span>
-                            ))}
-                        </div>
-                    </DetailSection>
-                )}
-
-                <DetailSection title="Requirements" icon={<RequirementsIcon className="h-5 w-5 text-yellow-400"/>} isOpen={openSection === 'req'} onToggle={() => toggleSection('req')}>
-                    <ul className="list-disc list-inside space-y-1">
-                        {result.requirements?.map((req, i) => <li key={i}>{req}</li>)}
-                    </ul>
-                </DetailSection>
-                <DetailSection title="Compatibility" icon={<CompatibilityIcon className="h-5 w-5 text-green-400"/>} isOpen={openSection === 'compat'} onToggle={() => toggleSection('compat')}>
-                     <ul className="list-disc list-inside space-y-1">
-                        {result.compatibility?.map((comp, i) => <li key={i}>{comp}</li>)}
-                    </ul>
-                </DetailSection>
-                <DetailSection title="Training Info" icon={<TrainingIcon className="h-5 w-5 text-cyan-400"/>} isOpen={openSection === 'train'} onToggle={() => toggleSection('train')}>
-                    <TrainingInfoDisplay info={result.trainingInfo} />
-                </DetailSection>
-
-                <div className="border-t border-gray-700/50 p-2">
-                    <button
-                        onClick={() => setIsNodeModalOpen(true)}
-                        className="w-full flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold text-gray-200 bg-gray-700/50 rounded-md hover:bg-gray-700 transition-colors"
-                    >
-                        <CodeBracketIcon className="h-5 w-5" />
-                        Generate ComfyUI Node
-                    </button>
+                <div className="absolute top-4 right-4">
+                    <span className="text-[9px] font-black text-indigo-400 uppercase bg-gray-950/90 px-2.5 py-1.5 rounded-lg border border-indigo-500/30 backdrop-blur-md shadow-2xl">
+                        {String(result.fileName).split('.').pop() || 'NODE'}
+                    </span>
                 </div>
-            </>
-        );
-    }
-  };
+            </div>
 
-  return (
-    <>
-      <div className="bg-gray-800 rounded-lg shadow-lg overflow-hidden flex flex-col transition-all duration-300 hover:shadow-indigo-500/20 hover:ring-1 hover:ring-indigo-700">
-        <div className="h-48 bg-gray-900 flex items-center justify-center">
-          {result.previewImageUrl ? (
-            <img src={result.previewImageUrl} alt={result.fileName} className="w-full h-full object-cover" />
-          ) : (
-            <InfoIcon className="h-10 w-10 text-gray-600" />
-          )}
+            <div className="p-5 bg-gray-950/60 border-b border-gray-700/50">
+                <p className="text-[13px] font-black text-white truncate uppercase tracking-tight" title={result.fileName}>{String(result.fileName).split(/[\\/]/).pop()}</p>
+                <div className="flex items-center justify-between mt-2">
+                    <p className="text-[9px] text-gray-500 uppercase font-black tracking-[0.2em]">{result.fileSizeMB} MB NEURAL ASSET</p>
+                    {result.confidence !== undefined && (
+                        <div className="flex items-center gap-2">
+                             <div className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_8px_#22c55e]"></div>
+                             <span className="text-[9px] font-black text-green-400">{(result.confidence * 100).toFixed(0)}% AUDIT</span>
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            <div className="flex-grow">
+                {!isPending && (
+                    <div className="animate-in fade-in duration-500">
+                        <div className="p-5 border-b border-gray-700/50 bg-gray-900/10 flex justify-between items-center">
+                            <div>
+                                <h3 className="font-black text-[11px] text-white uppercase tracking-widest">{renderValue(result.modelType)}</h3>
+                                <p className="text-[9px] text-indigo-400 font-black uppercase tracking-[0.2em] mt-1 opacity-70">{renderValue(result.modelFamily)}</p>
+                            </div>
+                            <div className="text-[9px] font-black text-gray-400 bg-gray-800/80 px-2.5 py-1 rounded-md uppercase border border-gray-700/50">{renderValue(result.baseModel)}</div>
+                        </div>
+
+                        {result.triggerWords && result.triggerWords.length > 0 && (
+                            <DetailSection title="Trigger Words" icon={<TriggerWordsIcon className="h-3.5 w-3.5"/>} isOpen={openSection === 'triggers'} onToggle={() => toggleSection('triggers')} count={result.triggerWords.length}>
+                                <div className="flex flex-wrap gap-1.5 py-1">
+                                    {result.triggerWords.map((word, i) => (
+                                        <span key={i} className="px-2 py-1 bg-indigo-900/20 text-indigo-300 text-[9px] font-black uppercase rounded-md border border-indigo-500/10">{word}</span>
+                                    ))}
+                                </div>
+                                <button onClick={() => { navigator.clipboard.writeText(result.triggerWords?.join(', ') || ''); alert('Copied Sequence'); }} className="mt-3 w-full py-2 bg-gray-800 hover:bg-gray-700 text-[9px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-2 border border-gray-700">
+                                    <CopyIcon className="h-3 w-3" /> Copy Sequence
+                                </button>
+                            </DetailSection>
+                        )}
+
+                        {result.trainingInfo && Object.values(result.trainingInfo).some(v => v !== null) && (
+                            <DetailSection title="Training Architecture" icon={<TrainingIcon className="h-3.5 w-3.5"/>} isOpen={openSection === 'training'} onToggle={() => toggleSection('training')}>
+                                <div className="grid grid-cols-2 gap-y-3 gap-x-4 py-2">
+                                    {Object.entries(result.trainingInfo).map(([key, val]) => (
+                                        <div key={key}>
+                                            <span className="text-[8px] text-gray-500 uppercase font-black block mb-0.5 tracking-tighter">{key.replace('ss_', '').replace('_', ' ')}</span>
+                                            <span className="text-[10px] text-gray-300 font-mono">{renderValue(val)}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </DetailSection>
+                        )}
+
+                        {result.requirements && result.requirements.length > 0 && (
+                            <DetailSection title="Deployment Requirements" icon={<RequirementsIcon className="h-3.5 w-3.5"/>} isOpen={openSection === 'requirements'} onToggle={() => toggleSection('requirements')} count={result.requirements.length}>
+                                <ul className="space-y-2 list-none">
+                                    {result.requirements.map((req, i) => (
+                                        <li key={i} className="text-[10px] text-gray-400 flex items-start gap-2 bg-gray-900/40 p-2 rounded-lg border border-gray-800">
+                                            <div className="w-1 h-1 rounded-full bg-red-500 mt-1.5 shrink-0" />
+                                            <span className="font-mono text-[9px] leading-relaxed">{req}</span>
+                                        </li>
+                                    ))}
+                                </ul>
+                            </DetailSection>
+                        )}
+
+                        {result.usageTips && result.usageTips.length > 0 && (
+                            <DetailSection title="Usage Protocol" icon={<RequirementsIcon className="h-3.5 w-3.5"/>} isOpen={openSection === 'tips'} onToggle={() => toggleSection('tips')} count={result.usageTips.length}>
+                                <ul className="space-y-2 list-none">
+                                    {result.usageTips.map((tip, i) => (
+                                        <li key={i} className="text-[10px] text-gray-400 leading-relaxed border-l-2 border-indigo-500/20 pl-3 py-1 bg-gray-900/20 rounded-r-lg">{tip}</li>
+                                    ))}
+                                </ul>
+                            </DetailSection>
+                        )}
+
+                        {result.tags && result.tags.length > 0 && (
+                            <DetailSection title="Node Tags" icon={<TagsIcon className="h-3.5 w-3.5"/>} isOpen={openSection === 'tags'} onToggle={() => toggleSection('tags')} count={result.tags.length}>
+                                <div className="flex flex-wrap gap-1.5 py-1">
+                                    {result.tags.map((tag, i) => (
+                                        <span key={i} className="text-[9px] text-gray-500 uppercase font-black tracking-tighter hover:text-indigo-400 transition-colors cursor-default">#{tag}</span>
+                                    ))}
+                                </div>
+                            </DetailSection>
+                        )}
+                    </div>
+                )}
+            </div>
+
+            <div className="p-4 bg-gray-900/40 space-y-3 mt-auto">
+                <div className="flex gap-2">
+                    {isGGUF ? (
+                        <button
+                            onClick={handleIntegrate}
+                            disabled={isIntegrating || isPending}
+                            className={`flex-grow flex items-center justify-center gap-2 px-4 py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all shadow-xl active:scale-95 border ${intStatus === 'success' ? 'bg-green-600 border-green-500 text-white' : 'bg-indigo-600 border-indigo-500 hover:bg-indigo-500 text-white disabled:opacity-50'}`}
+                        >
+                            {isIntegrating ? <LoaderIcon className="h-3.5 w-3.5 animate-spin" /> : intStatus === 'success' ? <CheckCircleIcon className="h-3.5 w-3.5" /> : <PlugIcon className="h-3.5 w-3.5" />}
+                            {isIntegrating ? 'Integrating' : intStatus === 'success' ? 'Hub Active' : 'Integrate Hub'}
+                        </button>
+                    ) : (
+                        <div className="flex-grow flex items-center justify-center px-4 py-3 bg-gray-800/40 text-[9px] font-black text-gray-600 uppercase tracking-widest rounded-xl border border-gray-700/50">
+                            Static Resource
+                        </div>
+                    )}
+                    <button onClick={onDelete} className="p-3 bg-gray-800 text-gray-500 hover:text-red-400 border border-gray-700 rounded-xl transition-all shadow-lg"><TrashIcon className="h-4 w-4" /></button>
+                </div>
+                <div className="bg-gray-950 p-3 rounded-xl border border-gray-800/50 shadow-inner group-hover:border-indigo-500/20 transition-colors">
+                    <p className="text-[8px] font-mono text-gray-600 truncate leading-none uppercase tracking-tighter flex items-center gap-2">
+                         <div className="w-1 h-1 rounded-full bg-gray-700"></div>
+                         ID: {result.hash?.substring(0, 16) || 'UNREGISTERED'}
+                    </p>
+                </div>
+            </div>
         </div>
-        <div className="p-4 bg-gray-800/50 border-b border-t border-gray-700/50">
-          <p className="text-sm font-semibold text-gray-200 truncate" title={result.fileName}>{result.fileName}</p>
-          <p className="text-xs text-gray-500">{result.fileSizeMB} MB</p>
-        </div>
-        <div className="flex-grow">
-          {getStatusContent()}
-        </div>
-      </div>
-      {result.status === AnalysisStatus.COMPLETED && (
-        <ComfyUINodeModal 
-          isOpen={isNodeModalOpen}
-          onClose={() => setIsNodeModalOpen(false)}
-          code={generateNodeCode(result)}
-          loraFileName={result.fileName}
-        />
-      )}
-    </>
-  );
+    );
 };
 
 export default LoraCard;

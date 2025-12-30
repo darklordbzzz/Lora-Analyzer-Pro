@@ -5,21 +5,27 @@ import LoraCard from './LoraCard';
 
 interface AnalysisResultsProps {
   results: LoraAnalysis[];
+  onDelete: (id: string) => void;
+  onRetry: (result: LoraAnalysis) => void;
+  canRetry: (result: LoraAnalysis) => boolean;
 }
 
-const AnalysisResults: React.FC<AnalysisResultsProps> = ({ results }) => {
+const AnalysisResults: React.FC<AnalysisResultsProps> = ({ results, onDelete, onRetry, canRetry }) => {
   if (results.length === 0) {
     return null;
   }
 
   return (
-    <div className="mt-8">
-      <h2 className="text-2xl font-bold text-center mb-6">Analysis Results</h2>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {results.map((result) => (
-          <LoraCard key={result.id} result={result} />
-        ))}
-      </div>
+    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+      {results.map((result) => (
+        <LoraCard 
+            key={result.id} 
+            result={result} 
+            onDelete={() => onDelete(result.id)}
+            onRetry={() => onRetry(result)}
+            canRetry={canRetry(result)}
+        />
+      ))}
     </div>
   );
 };
