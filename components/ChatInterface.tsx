@@ -6,7 +6,8 @@ import {
     PlusIcon, UserIcon, FileIcon, SearchIcon, FolderIcon,
     ChatIcon, ServerIcon, ImageIcon
 } from './Icons';
-import { streamChat, fileToBase64 } from '../services/llmService';
+import { streamChat } from '../services/llmService';
+import { fileToBase64 } from '../services/fileService';
 import type { LLMModel, ChatMessage, ChatAttachment, ChatConversation } from '../types';
 
 const CHAT_HISTORY_KEY = 'lora-analyzer-pro-chat-sessions';

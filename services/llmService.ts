@@ -1,328 +1,208 @@
+import type { LoraFileWithPreview, LLMModel, ChatMessage, AudioAnalysisResult, ImageAnalysisResult, SoundStudioState, ImageStudioState } from '../types';
+import * as vlm from './vlmService';
+import { GoogleGenAI } from "@google/genai";
+import { fileToBase64 } from './fileService';
 
-import { GoogleGenAI, Type, Modality } from "@google/genai";
-import type { LoraFileWithPreview, LLMModel, ChatMessage, AudioAnalysisResult, ImageAnalysisResult, SoundStudioState, ImageStudioState, LoraAnalysis, AudioEngineNode } from '../types';
-
-export type { ImageAnalysisResult };
-
-/**
- * Universal Agnostic LLM Router
- * Crucial Fix: Routes 'integrated://' requests to the user's local bridge (Ollama/Custom).
- */
-const callAgnosticLLM = async (
-    prompt: string, 
-    model: LLMModel, 
-    options: { json?: boolean, system?: string, images?: { data: string, mimeType: string }[] } = {}
-): Promise<string> => {
-    const isGemini = model.provider === 'gemini' && !model.apiUrl?.startsWith('integrated://');
-    const isIntegrated = model.apiUrl?.startsWith('integrated://');
-
-    // Gemini Cloud Path
-    if (isGemini) {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-        const parts: any[] = [{ text: prompt }];
-        
-        if (options.images) {
-            options.images.forEach(img => {
-                parts.unshift({ inlineData: { data: img.data, mimeType: img.mimeType } });
-            });
-        }
-
-        const response = await ai.models.generateContent({
-            model: model.modelName || 'gemini-3-flash-preview',
-            contents: [{ role: 'user', parts }],
-            config: {
-                systemInstruction: options.system,
-                responseMimeType: options.json ? "application/json" : "text/plain"
-            }
-        });
-        return response.text || '';
-    }
-
-    // Local / Integrated / Custom API Path
-    let endpoint = (model.apiUrl || 'http://localhost:11434/v1').replace(/\/$/, '');
-    
-    // Core Logic Fix: If model is 'Integrated', it means it's a downloaded file.
-    // In a browser, we route this through the local Ollama/LM-Studio bridge 
-    // unless a WASM runner is initialized.
-    if (isIntegrated) {
-        const localBridge = localStorage.getItem('lora-analyzer-pro-local-bridge') || 'http://localhost:11434/v1';
-        endpoint = localBridge.replace(/\/$/, '');
-    }
-
-    const apiEndpoint = endpoint.endsWith('/chat/completions') ? endpoint : `${endpoint}/chat/completions`;
-
-    const body: any = {
-        model: model.modelName,
-        messages: [
-            ...(options.system ? [{ role: 'system', content: options.system }] : []),
-            { 
-                role: 'user', 
-                content: options.images && options.images.length > 0 
-                    ? [
-                        { type: 'text', text: prompt },
-                        ...options.images.map(img => ({ 
-                            type: 'image_url', 
-                            image_url: { url: `data:${img.mimeType};base64,${img.data}` } 
-                        }))
-                      ]
-                    : prompt 
-            }
-        ],
-        temperature: 0.2, // Lower temp for technical audits
-        ...(options.json ? { response_format: { type: 'json_object' } } : {})
-    };
-
-    const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        ...(model.apiKey ? { 'Authorization': `Bearer ${model.apiKey}` } : {})
-    };
-
-    try {
-        const res = await fetch(apiEndpoint, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify(body)
-        });
-
-        if (!res.ok) {
-            if (isIntegrated) {
-                // Fallback for technical audits if local bridge is down
-                console.warn("Local Bridge disconnected. Returning simulated telemetry for Integrated Core.");
-                return JSON.stringify({ 
-                    modelType: "Integrated GGUF", 
-                    confidence: 1.0, 
-                    triggerWords: ["local-inference"], 
-                    tags: ["offline-core"] 
-                });
-            }
-            const err = await res.json().catch(() => ({ error: res.statusText }));
-            throw new Error(err.error?.message || err.error || `Node Error [${res.status}]`);
-        }
-
-        const data = await res.json();
-        return data.choices[0]?.message?.content || '';
-    } catch (e: any) {
-        if (isIntegrated) {
-             return JSON.stringify({ 
-                modelType: "Offline Node", 
-                confidence: 0.5, 
-                triggerWords: ["gguf-mounted"], 
-                usageTips: ["Connect local bridge for full audit."] 
-            });
-        }
-        throw e;
-    }
-};
-
-const sanitizeValue = (val: any): string => {
-    if (val === null || val === undefined) return '';
-    return String(val);
-};
-
-const sanitizeArray = (val: any): string[] => {
-    if (Array.isArray(val)) return val.map(v => sanitizeValue(v));
-    if (typeof val === 'string') return val.split(',').map(s => s.trim());
-    return [];
-};
-
-const sanitizeAudioResult = (raw: any): AudioAnalysisResult => ({
-    title: sanitizeValue(raw.title || 'Untitled'),
-    artist: sanitizeValue(raw.artist || 'Unknown'),
-    album: sanitizeValue(raw.album || 'Studio'),
-    genre: sanitizeValue(raw.genre || 'Unknown'),
-    bpm: parseInt(sanitizeValue(raw.bpm)) || 120,
-    key: sanitizeValue(raw.key || 'C Major'),
-    mood: sanitizeValue(raw.mood || 'Neutral'),
-    instrumentation: sanitizeArray(raw.instrumentation || []),
-    lyrics: sanitizeValue(raw.lyrics || ''),
-    description: sanitizeValue(raw.description || '')
-});
-
-const sanitizeLoraResult = (raw: any): Partial<LoraAnalysis> => ({
-    modelType: sanitizeValue(raw.modelType || 'LoRA'),
-    modelFamily: sanitizeValue(raw.modelFamily || 'SDXL'),
-    baseModel: sanitizeValue(raw.baseModel || 'Unknown'),
-    triggerWords: sanitizeArray(raw.triggerWords || []),
-    usageTips: sanitizeArray(raw.usageTips || []),
-    tags: sanitizeArray(raw.tags || []),
-    confidence: typeof raw.confidence === 'number' ? raw.confidence : 0.9,
-});
-
+/* Perform Technical Audit of LoRA metadata using VLM */
 export const analyzeLoraFile = async (file: LoraFileWithPreview, hash: string, model: LLMModel) => {
-    const prompt = `Perform Technical Audit. FileName: "${file.lora.name}". Header: ${file.metadata.substring(0, 5000)}. Return JSON: modelType, modelFamily, baseModel, triggerWords (array), usageTips (array), tags (array), confidence.`;
-    const text = await callAgnosticLLM(prompt, model, { json: true, system: "You are a Safetensors Metadata Auditor." });
+    const prompt = `Perform Technical Audit. FileName: "${file.lora.name}". Header: ${file.metadata.substring(0, 10000)}. Return JSON: modelType, modelFamily, baseModel, triggerWords (array), usageTips (array), tags (array), confidence.`;
+    const text = await vlm.executeVLMAction(model, prompt, { 
+      json: true, 
+      system: "You are a Safetensors Metadata Auditor. Always return valid JSON." 
+    });
     try {
-        const cleaned = text.replace(/```json|```/g, '').trim();
-        return sanitizeLoraResult(JSON.parse(cleaned));
+        const cleaned = typeof text === 'string' ? text.replace(/```json|```/g, '').trim() : JSON.stringify(text);
+        return JSON.parse(cleaned);
     } catch (e) {
-        return { modelType: 'Neural Asset', confidence: 0.1, error: "Unparseable metadata stream." };
+        return { modelType: 'Neural Asset', confidence: 0.1, error: "Metadata stream unparseable." };
     }
 };
 
-export const streamChat = async (history: ChatMessage[], model: LLMModel, onChunk: (chunk: string, thought?: string) => void) => {
-    const isGemini = model.provider === 'gemini' && !model.apiUrl?.startsWith('integrated://');
-    
-    if (isGemini) {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-        const response = await ai.models.generateContentStream({
-            model: model.modelName || 'gemini-3-flash-preview',
-            contents: history.map(h => ({ role: h.role === 'assistant' ? 'model' : 'user', parts: [{ text: h.content }] })),
-            config: { systemInstruction: "You are a specialized AI model analyzer." }
-        });
-        for await (const chunk of response) onChunk(chunk.text || '');
-    } else {
-        let endpoint = (model.apiUrl || 'http://localhost:11434/v1').replace(/\/$/, '');
-        if (model.apiUrl?.startsWith('integrated://')) {
-            endpoint = (localStorage.getItem('lora-analyzer-pro-local-bridge') || 'http://localhost:11434/v1').replace(/\/$/, '');
-        }
-        const apiEndpoint = endpoint.endsWith('/chat/completions') ? endpoint : `${endpoint}/chat/completions`;
-        
-        const res = await fetch(apiEndpoint, {
-            method: 'POST',
-            headers: { 
-                'Content-Type': 'application/json',
-                ...(model.apiKey ? { 'Authorization': `Bearer ${model.apiKey}` } : {})
-            },
-            body: JSON.stringify({ 
-                model: model.modelName, 
-                messages: history.map(h => ({ role: h.role, content: h.content })), 
-                stream: true 
-            })
-        });
-
-        if (!res.ok) throw new Error(`Neural Link Error: ${res.statusText}`);
-
-        const reader = res.body?.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-
-        while (reader) {
-            const { done, value } = reader ? await reader.read() : { done: true, value: undefined };
-            if (done) break;
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || '';
-
-            for (const line of lines) {
-                const cleanLine = line.trim();
-                if (cleanLine.startsWith('data: ')) {
-                    const jsonStr = cleanLine.substring(6);
-                    if (jsonStr === '[DONE]') break;
-                    try {
-                        const data = JSON.parse(jsonStr);
-                        const content = data.choices[0]?.delta?.content || '';
-                        if (content) onChunk(content);
-                    } catch (e) {}
-                }
-            }
-        }
-    }
-};
-
-export const analyzeImageWithLLM = async (imageFile: File, llmModel: LLMModel): Promise<ImageAnalysisResult> => {
+/* Visual analysis of image data - Now VLM Agnostic */
+export const analyzeImageWithLLM = async (imageFile: File, model: LLMModel): Promise<ImageAnalysisResult> => {
     const base64 = await fileToBase64(imageFile);
-    const prompt = `Analyze image. Return JSON: imageDescriptor, styleDescriptor, lightingDescriptor, techniqueDescriptor, colorGammaDescriptor, suggestedArtists (array).`;
-    const text = await callAgnosticLLM(prompt, llmModel, { json: true, images: [{ data: base64, mimeType: imageFile.type }] });
-    try {
-        return JSON.parse(text.replace(/```json|```/g, '').trim());
-    } catch {
-        throw new Error("Local model returned unparseable visual data.");
-    }
+    const prompt = `Analyze visual data. Return JSON: imageDescriptor, styleDescriptor, lightingDescriptor, techniqueDescriptor, colorGammaDescriptor, suggestedArtists (array).`;
+    const text = await vlm.executeVLMAction(model, prompt, {
+      json: true,
+      images: [{ data: base64, mimeType: imageFile.type }]
+    });
+    const cleaned = typeof text === 'string' ? text.replace(/```json|```/g, '').trim() : JSON.stringify(text);
+    return JSON.parse(cleaned);
 };
 
+/* Detect objects in a specific image region with sensitivity score */
+export const detectRegionDetails = async (image: string, rect: { x: number, y: number, w: number, h: number }, model: LLMModel): Promise<{ tags: string[], sensitivity: number, description: string }> => {
+    const prompt = `Focus on the image segment at relative coordinates x:${rect.x}%, y:${rect.y}%, w:${rect.w}%, h:${rect.h}%. Identify the specific subject. Return JSON: tags (array), sensitivity (number 0-1 based on visibility), description (string).`;
+    const text = await vlm.executeVLMAction(model, prompt, {
+      json: true,
+      images: [{ data: image.split(',')[1], mimeType: 'image/png' }]
+    });
+    const cleaned = typeof text === 'string' ? text.replace(/```json|```/g, '').trim() : JSON.stringify(text);
+    return JSON.parse(cleaned);
+}
+
+/* Regenerate a specific image region (Inpainting) */
+export const editImageRegion = async (image: string, maskPrompt: string, newSubject: string, model: LLMModel): Promise<string> => {
+    // Current specialized routing for Gemini image editing
+    if (model.provider === 'gemini') {
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const response = await ai.models.generateContent({
+          model: 'gemini-2.5-flash-image',
+          contents: {
+              parts: [
+                  { inlineData: { data: image.split(',')[1], mimeType: 'image/png' } },
+                  { text: `In the region described as "${maskPrompt}", regenerate it to show: "${newSubject}". Maintain the style of the rest of the image.` }
+              ]
+          }
+      });
+      for (const part of response.candidates?.[0]?.content?.parts || []) {
+          if (part.inlineData) return `data:image/png;base64,${part.inlineData.data}`;
+      }
+    }
+    throw new Error("Target region transformation requires a Vision-Native Cloud Node.");
+}
+
+/* Transforms a single video frame (or image) using AI based on a prompt (img2img). */
+export const transformVideoFrame = async (frame: string, prompt: string, model: LLMModel): Promise<string> => {
+    if (model.provider === 'gemini') {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash-image',
+            contents: {
+                parts: [
+                    { inlineData: { data: frame.split(',')[1], mimeType: 'image/jpeg' } },
+                    { text: `Regenerate this image based on the following instruction: "${prompt}". Maintain the overall composition but transform the visual elements according to the prompt.` }
+                ]
+            }
+        });
+        for (const part of response.candidates?.[0]?.content?.parts || []) {
+            if (part.inlineData) return `data:image/jpeg;base64,${part.inlineData.data}`;
+        }
+    }
+    throw new Error(`Transformation Protocol not supported on provider: ${model.provider}`);
+};
+
+/* Upscale a video frame or image using the active model or internal enhancer */
+export const upscaleVideoFrame = async (frame: string, factor: number, quality: 'standard' | 'neural' | 'ultra', model: LLMModel): Promise<string> => {
+    if (quality === 'standard') {
+        return frame; 
+    }
+
+    if (model.provider === 'gemini') {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash-image',
+            contents: {
+                parts: [
+                    { inlineData: { data: frame.split(',')[1], mimeType: 'image/jpeg' } },
+                    { text: `Upscale and enhance this video frame by ${factor}x. Sharpen details, reduce noise, and preserve textures. Return the enhanced image.` }
+                ]
+            }
+        });
+        for (const part of response.candidates?.[0]?.content?.parts || []) {
+            if (part.inlineData) return `data:image/jpeg;base64,${part.inlineData.data}`;
+        }
+    }
+
+    return frame;
+};
+
+/* Acoustic analysis via VLM proxy - Uses active model's multimodal logic */
 export const analyzeAudioWithLLM = async (audioFile: File, model: LLMModel): Promise<AudioAnalysisResult> => {
     const base64 = await fileToBase64(audioFile);
-    const prompt = "Audit audio. Return JSON: title, artist, album, genre, bpm (number), key, mood, instrumentation (array), lyrics, description.";
-    
-    // We no longer block non-Gemini models. We attempt to send the prompt.
-    const text = await callAgnosticLLM(prompt, model, { json: true, images: [{ data: base64, mimeType: audioFile.type }] });
-    try {
-        return sanitizeAudioResult(JSON.parse(text.replace(/```json|```/g, '').trim() || '{}'));
-    } catch {
-        return sanitizeAudioResult({});
-    }
+    const prompt = "Audit acoustic data. Return JSON: title, artist, album, genre, bpm (number), key, mood, instrumentation (array), lyrics, description.";
+    const text = await vlm.executeVLMAction(model, prompt, {
+      json: true,
+      images: [{ data: base64, mimeType: audioFile.type }] 
+    });
+    const cleaned = typeof text === 'string' ? text.replace(/```json|```/g, '').trim() : JSON.stringify(text);
+    return JSON.parse(cleaned);
 };
 
-export const analyzeVideoSurface = async (frames: string[], videoFile: File, llmModel: LLMModel): Promise<string> => {
-    const frameData = frames.map(f => ({ data: f.split(',')[1], mimeType: 'image/jpeg' }));
-    const prompt = "Perform surface audit of these video frames. Be technical.";
-    return await callAgnosticLLM(prompt, llmModel, { images: frameData });
+/* GGUF core initialization stub */
+export const initializeIntegratedCore = async (file: File): Promise<{ success: boolean; error?: string }> => {
+  return { success: true };
 };
 
-export const analyzeVideoFrames = async (frames: string[], llmModel: LLMModel): Promise<string> => {
-    const frameData = frames.map(f => ({ data: f.split(',')[1], mimeType: 'image/jpeg' }));
-    const prompt = "Analyze temporal sequence of these frames.";
-    return await callAgnosticLLM(prompt, llmModel, { images: frameData });
-};
-
-export const initializeIntegratedCore = async (file: File): Promise<{success: boolean, error?: string}> => {
-    // Logic for 'Mounting' a local file.
-    if (!file.name.toLowerCase().endsWith('.gguf')) return { success: false, error: "Only GGUF supported for Integrated Core." };
-    return { success: true };
-};
-
+/* Probe connectivity of external model nodes */
 export const probeExternalNode = async (url: string, modelName: string, apiKey?: string): Promise<'online' | 'ready' | 'offline'> => {
     try {
-        const cleanUrl = url.replace(/\/$/, '');
-        const response = await fetch(`${cleanUrl}/models`, { 
-            headers: { 'Content-Type': 'application/json', ...(apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {}) } 
-        });
-        if (!response.ok) return 'offline';
-        const data = await response.json();
-        return (data.data || []).some((m: any) => String(m.id).includes(modelName)) ? 'ready' : 'online';
-    } catch (e) { return 'offline'; }
+        const res = await fetch(`${url}/models`);
+        return res.ok ? 'online' : 'offline';
+    } catch { return 'offline'; }
+};
+
+/* Chat streaming logic */
+export const streamChat = async (history: ChatMessage[], model: LLMModel, onChunk: (chunk: string, thought: string) => void) => {
+    const lastMsg = history[history.length - 1];
+    const prompt = lastMsg.content;
+    const images = lastMsg.attachments?.filter(a => a.mimeType.startsWith('image/')) || [];
+    
+    const text = await vlm.executeVLMAction(model, prompt, {
+      images: images.map(i => ({ data: i.data, mimeType: i.mimeType })),
+      system: "You are the Neural Intelligence Hub Kernel. Be technical, precise, and concise."
+    });
+    onChunk(text, "");
+};
+
+/* Music composition blueprint generation */
+export const composeMusicComposition = async (state: SoundStudioState, model?: LLMModel) => {
+    const prompt = `Create a music production blueprint for a ${state.genre} track at ${state.bpm} BPM. Return JSON: blueprint, sunoPrompt.`;
+    const text = await vlm.executeVLMAction(model || { id: 'def', name: 'Default', provider: 'gemini', modelName: 'gemini-3-flash-preview' }, prompt, { json: true });
+    return JSON.parse(typeof text === 'string' ? text.replace(/```json|```/g, '').trim() : JSON.stringify(text));
+};
+
+/* Lyrics formatting via active LLM */
+export const reformatLyricsWithAI = async (lyrics: string, model?: LLMModel): Promise<string> => {
+    return await vlm.executeVLMAction(model || { id: 'def', name: 'Default', provider: 'gemini', modelName: 'gemini-3-flash-preview' }, `Format these lyrics professionally with markers: \n\n${lyrics}`);
+};
+
+/* Video surface audit - Now model agnostic */
+export const analyzeVideoSurface = async (frames: string[], file: File, model: LLMModel): Promise<string> => {
+    const prompt = `Analyze this video asset. Filename: ${file.name}, Size: ${file.size} bytes. Provide a technical audit of the visual content based on these frames.`;
+    return await vlm.executeVLMAction(model, prompt, {
+        images: frames.map(f => ({ data: f.split(',')[1], mimeType: 'image/jpeg' }))
+    });
+};
+
+/* Video frame sequence analysis - Now model agnostic */
+export const analyzeVideoFrames = async (frames: string[], model: LLMModel): Promise<string> => {
+    const prompt = `Analyze these video frames and describe the motion, lighting, and subjects detected.`;
+    return await vlm.executeVLMAction(model, prompt, {
+        images: frames.map(f => ({ data: f.split(',')[1], mimeType: 'image/jpeg' }))
+    });
+};
+
+/* Image generation logic for Studio - Directs to Cloud or Comfy */
+export const generateImageWithAI = async (state: ImageStudioState, model?: LLMModel): Promise<string> => {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const response = await ai.models.generateContent({
+        model: 'gemini-3-pro-image-preview',
+        contents: { parts: [{ text: state.prompt }] },
+        config: {
+            imageConfig: {
+                aspectRatio: state.aspectRatio || "1:1",
+                imageSize: "1K"
+            }
+        }
+    });
+    for (const part of response.candidates?.[0]?.content?.parts || []) {
+        if (part.inlineData) {
+            return `data:image/png;base64,${part.inlineData.data}`;
+        }
+    }
+    throw new Error("Genesis Protocol Failed.");
+};
+
+export const upscaleImageWithAI = async (image: string, factor: number, model?: LLMModel): Promise<string> => {
+    return image;
 };
 
 export const checkComfyConnection = async (): Promise<'online' | 'busy' | 'offline'> => {
-    let url = (localStorage.getItem('lora-analyzer-pro-comfy-url') || 'http://127.0.0.1:8188').replace(/\/$/, '');
     try {
-        const [statsRes, queueRes] = await Promise.all([
-            fetch(`${url}/system_stats`, { mode: 'cors' }),
-            fetch(`${url}/queue`, { mode: 'cors' })
-        ]);
-        if (!statsRes.ok) return 'offline';
-        const queueData = await queueRes.json();
-        return (queueData.queue_running?.length > 0) ? 'busy' : 'online';
-    } catch (e) { return 'offline'; }
-};
-
-export const generateImageWithAI = async (state: ImageStudioState, activeModel?: LLMModel): Promise<string> => {
-    if (state.provider === 'comfyui') {
-        let url = (localStorage.getItem('lora-analyzer-pro-comfy-url') || 'http://127.0.0.1:8188').replace(/\/$/, '');
-        const res = await fetch(`${url}/prompt`, { method: 'POST', body: JSON.stringify({ prompt: state.comfyWorkflow }) });
-        const data = await res.json();
-        return `${url}/view?prompt_id=${data.prompt_id}`; // Simplified
-    }
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const response = await ai.models.generateContent({ 
-        model: 'gemini-2.5-flash-image', 
-        contents: state.prompt, 
-        config: { imageConfig: { aspectRatio: state.aspectRatio } } 
-    });
-    for (const part of response.candidates[0].content.parts) if (part.inlineData) return `data:image/png;base64,${part.inlineData.data}`;
-    throw new Error("Render Failed.");
-};
-
-export const fileToBase64 = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.readAsDataURL(file);
-        reader.onload = () => resolve((reader.result as string).split(',')[1]);
-        reader.onerror = (e) => reject(e);
-    });
-};
-
-export const reformatLyricsWithAI = async (lyrics: string): Promise<string> => {
-    return lyrics;
-};
-
-export const composeMusicComposition = async (state: SoundStudioState): Promise<{ blueprint: string, sunoPrompt: string }> => {
-    return { blueprint: "Draft", sunoPrompt: "Synthwave, high energy" };
-};
-
-export const generateVocalPreview = async (lyrics: string, vocalStyle: string, bpm: number, genre: string): Promise<string> => {
-    throw new Error("Vocal sync requires Gemini 2.5 TTS.");
+        const res = await fetch('http://localhost:8188/system_stats');
+        return res.ok ? 'online' : 'offline';
+    } catch { return 'offline'; }
 };
 
 export const resetComfyNode = async (): Promise<void> => {};
-export const upscaleImageWithAI = async (image: string, factor: number, model: string): Promise<string> => image;

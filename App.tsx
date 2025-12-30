@@ -11,6 +11,7 @@ import AudioMetadataViewer from './components/AudioMetadataViewer';
 import VideoMetadataViewer from './components/VideoMetadataViewer';
 import SoundStudio from './components/SoundStudio';
 import ImageStudio from './components/ImageStudio';
+import DatasetStudio from './components/DatasetStudio';
 import ChatInterface from './components/ChatInterface';
 import HelpView from './components/HelpView';
 import { LoaderIcon, SearchIcon, UploadIcon } from './components/Icons';
@@ -154,6 +155,7 @@ const App: React.FC = () => {
         <div className={currentView === 'video' ? 'block' : 'hidden'}><VideoMetadataViewer activeModel={activeModel} /></div>
         <div className={currentView === 'audio' ? 'block' : 'hidden'}><AudioMetadataViewer activeModel={activeModel} onImportToStudio={(d) => { setStudioState(d); setCurrentView('studio'); }} /></div>
         <div className={currentView === 'chat' ? 'block' : 'hidden'}><ChatInterface activeModel={activeModel} /></div>
+        <div className={currentView === 'dataset' ? 'block' : 'hidden'}><DatasetStudio activeModel={activeModel} /></div>
         <div className={currentView === 'studio' ? 'block' : 'hidden'}><SoundStudio initialState={studioState} /></div>
         <div className={currentView === 'imageStudio' ? 'block' : 'hidden'}><ImageStudio initialState={imageStudioState} activeModel={activeModel} /></div>
         <div className={currentView === 'help' ? 'block' : 'hidden'}><HelpView /></div>

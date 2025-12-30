@@ -1,8 +1,9 @@
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { ImageStudioState, LLMModel } from '../types';
-import { BoxIcon, ImageIcon, LoaderIcon, RefreshIcon, CloudIcon, DownloadIcon, LabIcon, SparklesIcon as GlowIcon, CodeBracketIcon, LinkIcon, XIcon, ServerIcon, PlugIcon, InfoIcon, ChevronDownIcon, XCircleIcon, CheckCircleIcon, TerminalIcon, PlusIcon, EditIcon } from './Icons';
-import { generateImageWithAI, upscaleImageWithAI, checkComfyConnection, resetComfyNode, fileToBase64 } from '../services/llmService';
+import { BoxIcon, ImageIcon, LoaderIcon, RefreshIcon, CloudIcon, DownloadIcon, LabIcon, SparklesIcon as GlowIcon, CodeBracketIcon, LinkIcon, XIcon, ServerIcon, PlugIcon, InfoIcon, ChevronDownIcon, XCircleIcon, CheckCircleIcon, TerminalIcon, PlusIcon, EditIcon, TargetIcon, ShieldIcon, DatabaseIcon, CropIcon } from './Icons';
+import { generateImageWithAI, upscaleImageWithAI, checkComfyConnection, resetComfyNode, detectRegionDetails, editImageRegion } from '../services/llmService';
+import { fileToBase64 } from '../services/fileService';
 
 interface ImageStudioProps {
   initialState: ImageStudioState | null;
@@ -32,6 +33,16 @@ const RATIO_PRESETS = [
 ];
 
 const PIXEL_STEP = 64;
+
+interface VaultItem {
+    id: string;
+    image: string;
+    parentImage: string;
+    rect: { x: number, y: number, w: number, h: number };
+    tags: string[];
+    description: string;
+    timestamp: number;
+}
 
 interface AccordionSectionProps {
     title: string;
@@ -108,14 +119,24 @@ const ImageStudio: React.FC<ImageStudioProps> = ({ initialState, activeModel }) 
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
     resource: true,
     asset: true,
-    blueprint: false,
     spatial: false,
-    mastering: false
+    mastering: false,
+    vault: false
   });
 
-  const toggleSection = (id: string) => {
-    setOpenSections(prev => ({ ...prev, [id]: !prev[id] }));
-  };
+  const [isSpatialMode, setIsSpatialMode] = useState(false);
+  const [currentRect, setCurrentRect] = useState<{ x: number, y: number, w: number, h: number } | null>(null);
+  const [isDraggingRect, setIsDraggingRect] = useState(false);
+  const [rectStart, setRectStart] = useState<{ x: number, y: number } | null>(null);
+  const [detectionResults, setDetectionResults] = useState<{ tags: string[], sensitivity: number, description: string } | null>(null);
+  const [isDetecting, setIsDetecting] = useState(false);
+  const [sensitivityThreshold, setSensitivityThreshold] = useState(0.5);
+  const [regenPrompt, setRegenPrompt] = useState('');
+  const [vault, setVault] = useState<VaultItem[]>([]);
+
+  const canvasContainerRef = useRef<HTMLDivElement>(null);
+
+  const toggleSection = (id: string) => setOpenSections(prev => ({ ...prev, [id]: !prev[id] }));
 
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>('flux-dev');
   const [customWorkflowJson, setCustomWorkflowJson] = useState<string>('');
@@ -133,14 +154,6 @@ const ImageStudio: React.FC<ImageStudioProps> = ({ initialState, activeModel }) 
   const refreshConnection = async () => {
     const status = await checkComfyConnection();
     setComfyStatus(status);
-  };
-
-  const handleResetRealloc = async () => {
-      setIsResetting(true);
-      await resetComfyNode();
-      await new Promise(r => setTimeout(r, 800));
-      await refreshConnection();
-      setIsResetting(false);
   };
 
   useEffect(() => {
@@ -164,30 +177,8 @@ const ImageStudio: React.FC<ImageStudioProps> = ({ initialState, activeModel }) 
           const base64 = await fileToBase64(file);
           setState(s => ({ ...s, sourceImage: `data:${file.type};base64,${base64}` }));
           setOpenSections(prev => ({ ...prev, asset: true }));
-      } catch (e) {
-          console.error("Asset mapping failed", e);
-      }
+      } catch (e) { console.error(e); }
   }, []);
-
-  // Clipboard Paste Integration for Studio
-  useEffect(() => {
-    const handlePaste = (e: ClipboardEvent) => {
-        const target = e.target as HTMLElement;
-        if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
-
-        const items = e.clipboardData?.items;
-        if (items) {
-            for (let i = 0; i < items.length; i++) {
-                if (items[i].type.indexOf('image') !== -1) {
-                    const blob = items[i].getAsFile();
-                    if (blob) handleFileChange(blob);
-                }
-            }
-        }
-    };
-    window.addEventListener('paste', handlePaste);
-    return () => window.removeEventListener('paste', handlePaste);
-  }, [handleFileChange]);
 
   const handleGenerate = async () => {
     setIsGenerating(true);
@@ -195,370 +186,240 @@ const ImageStudio: React.FC<ImageStudioProps> = ({ initialState, activeModel }) 
     try {
       let finalWorkflow = null;
       if (selectedTemplateId === 'custom' && customWorkflowJson) {
-          try {
-              finalWorkflow = JSON.parse(customWorkflowJson);
-          } catch (e) {
-              throw new Error("Invalid Custom Workflow JSON syntax.");
-          }
-      } else if (selectedTemplateId !== 'custom') {
-          (state as any).comfyHintCkpt = selectedTemplate.ckpt;
-      }
+          try { finalWorkflow = JSON.parse(customWorkflowJson); } catch (e) { throw new Error("Invalid Custom Workflow JSON syntax."); }
+      } else if (selectedTemplateId !== 'custom') { (state as any).comfyHintCkpt = selectedTemplate.ckpt; }
 
       const url = await generateImageWithAI({ ...state, comfyWorkflow: finalWorkflow }, activeModel);
       setGeneratedImageUrl(url);
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setIsGenerating(false);
-    }
+    } catch (e: any) { setError(e.message); } finally { setIsGenerating(false); }
   };
 
-  /**
-   * ACTIVE-FIRST LOGIC
-   * We trust the user over the background status pings. 
-   * If a prompt exists, the button is ARMED and ALIVE.
-   */
+  /* SPATIAL SECTOR LOGIC */
+  const startRect = (e: React.MouseEvent) => {
+      if (!isSpatialMode || !canvasContainerRef.current) return;
+      const rect = canvasContainerRef.current.getBoundingClientRect();
+      const x = ((e.clientX - rect.left) / rect.width) * 100;
+      const y = ((e.clientY - rect.top) / rect.height) * 100;
+      setRectStart({ x, y });
+      setIsDraggingRect(true);
+      setDetectionResults(null);
+  };
+
+  const updateRect = (e: React.MouseEvent) => {
+      if (!isDraggingRect || !rectStart || !canvasContainerRef.current) return;
+      const rect = canvasContainerRef.current.getBoundingClientRect();
+      const cx = ((e.clientX - rect.left) / rect.width) * 100;
+      const cy = ((e.clientY - rect.top) / rect.height) * 100;
+      setCurrentRect({ x: Math.min(rectStart.x, cx), y: Math.min(rectStart.y, cy), w: Math.abs(cx - rectStart.x), h: Math.abs(cy - rectStart.y) });
+  };
+
+  const stopRect = async () => {
+      setIsDraggingRect(false);
+      if (currentRect && currentRect.w > 2 && currentRect.h > 2 && generatedImageUrl && activeModel) {
+          setIsDetecting(true);
+          try {
+              const res = await detectRegionDetails(generatedImageUrl, currentRect, activeModel);
+              setDetectionResults(res);
+              setRegenPrompt(res.description);
+          } catch (e) { console.error(e); } finally { setIsDetecting(false); }
+      }
+  };
+
+  const handleRegenSegment = async () => {
+      if (!currentRect || !generatedImageUrl || !activeModel || !regenPrompt) return;
+      setIsGenerating(true);
+      try {
+          const edited = await editImageRegion(generatedImageUrl, detectionResults?.description || "the selected region", regenPrompt, activeModel);
+          const newItem: VaultItem = {
+              id: crypto.randomUUID(),
+              image: edited,
+              parentImage: generatedImageUrl,
+              rect: { ...currentRect },
+              tags: detectionResults?.tags || [],
+              description: regenPrompt,
+              timestamp: Date.now()
+          };
+          setVault(prev => [newItem, ...prev]);
+          setGeneratedImageUrl(edited);
+          setOpenSections(prev => ({ ...prev, vault: true }));
+          setIsSpatialMode(false);
+          setCurrentRect(null);
+      } catch (e: any) { setError(e.message); } finally { setIsGenerating(false); }
+  }
+
   const isPromptEmpty = !state.prompt.trim();
   const isDisabled = isGenerating || isPromptEmpty;
   
-  const getButtonLabel = () => {
-    if (isGenerating) return 'Synthesizing';
-    if (isPromptEmpty) return 'Awaiting Logic';
-    if (state.provider === 'comfyui') {
-        if (comfyStatus === 'offline') return 'Force Local Link';
-        if (comfyStatus === 'busy') return 'Queue Genesis';
-    }
-    return 'Execute Genesis';
-  };
-
-  const getButtonStyles = () => {
-      if (isDisabled) return 'bg-gray-800 text-gray-600 border-gray-700 opacity-40 cursor-not-allowed';
-      
-      // Hyper-vivid "Armed" state purely based on user intent (prompt entry)
-      if (state.provider === 'gemini') {
-          return 'bg-gradient-to-br from-indigo-500 via-indigo-600 to-indigo-800 text-white shadow-[0_0_50px_rgba(79,70,229,0.5)] border-indigo-400 animate-pulse';
-      }
-      return 'bg-gradient-to-br from-orange-500 via-red-600 to-red-800 text-white shadow-[0_0_50px_rgba(234,88,12,0.5)] border-orange-400 animate-pulse';
-  };
-
   return (
     <div className="max-w-7xl mx-auto flex flex-col gap-6 h-[calc(100vh-140px)] animate-in fade-in duration-500 overflow-hidden">
+      <style>{`
+          @keyframes scanline { 0% { top: 0; } 100% { top: 100%; } }
+          .scanline-effect { position: absolute; width: 100%; height: 2px; background: rgba(99, 102, 241, 0.4); box-shadow: 0 0 10px rgba(99, 102, 241, 0.8); animation: scanline 3s linear infinite; pointer-events: none; }
+          .marching-ants { stroke-dasharray: 4; animation: ants 1s linear infinite; }
+          @keyframes ants { to { stroke-dashoffset: -8; } }
+      `}</style>
+
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 flex-grow h-full overflow-hidden">
         
-        {/* UNIFIED SIDEBAR ZONE */}
+        {/* SIDEBAR */}
         <div className="lg:col-span-4 xl:col-span-3 flex flex-col h-full overflow-hidden">
-          
-          {/* SINGLE SCROLL AREA FOR ALL CONTROLS */}
           <div className="flex-grow overflow-y-auto custom-scrollbar pr-2 pb-12 space-y-1">
             
-            {/* STICKY ACTION BUTTON - UNLOCKED & ARMED */}
             <div className="mb-6 sticky top-0 z-[60] bg-gray-900/95 backdrop-blur-md py-4 px-0.5 border-b border-gray-800/50">
                 <button 
                     onClick={handleGenerate} 
                     disabled={isDisabled}
-                    className={`w-full py-6 font-black uppercase tracking-[0.6em] text-[12px] rounded-[2.5rem] flex items-center justify-center gap-4 transition-all border-2 relative group overflow-hidden ${getButtonStyles()}`}
+                    className={`w-full py-6 font-black uppercase tracking-[0.6em] text-[12px] rounded-[2.5rem] flex items-center justify-center gap-4 transition-all border-2 relative group overflow-hidden ${isDisabled ? 'bg-gray-800 text-gray-600 border-gray-700 opacity-40' : 'bg-gradient-to-br from-indigo-500 to-indigo-800 text-white shadow-[0_0_50px_rgba(79,70,229,0.5)] border-indigo-400 animate-pulse'}`}
                 >
-                    <div className="absolute inset-0 bg-white/20 opacity-0 group-hover:opacity-100 transition-opacity"></div>
                     {isGenerating ? <LoaderIcon className="h-6 w-6 animate-spin" /> : <GlowIcon className="h-6 w-6" />}
-                    <span className="relative z-10 antialiased drop-shadow-lg">{getButtonLabel()}</span>
+                    <span className="relative z-10">{isGenerating ? 'Synthesizing' : 'Execute Genesis'}</span>
                 </button>
-                {!isPromptEmpty && comfyStatus === 'offline' && state.provider === 'comfyui' && (
-                    <p className="text-[8px] text-orange-500 font-black uppercase tracking-widest text-center mt-3 animate-bounce">
-                        Protocol Override: Attempting Blind Uplink
-                    </p>
-                )}
             </div>
 
-            <AccordionSection 
-                title="Resource Hub" 
-                icon={<CloudIcon className="h-4 w-4" />}
-                isOpen={openSections.resource}
-                onToggle={() => toggleSection('resource')}
-                indicator={state.provider === 'gemini' ? 'green' : (comfyStatus === 'online' ? 'green' : comfyStatus === 'busy' ? 'orange' : 'red')}
-            >
+            <AccordionSection title="Resource Hub" icon={<CloudIcon className="h-4 w-4" />} isOpen={openSections.resource} onToggle={() => toggleSection('resource')} indicator={state.provider === 'gemini' ? 'green' : (comfyStatus === 'online' ? 'green' : 'red')}>
                 <div className="flex flex-col gap-1.5 p-1.5 bg-gray-950 rounded-2xl border border-gray-800 shadow-inner">
-                    <button onClick={() => setState(s => ({ ...s, provider: 'comfyui' }))} className={`flex items-center justify-between px-4 py-2.5 text-[9px] font-black uppercase rounded-xl transition-all ${state.provider === 'comfyui' ? 'bg-orange-600 text-white shadow-xl' : 'text-gray-500 hover:bg-gray-800'}`}>
-                        <span>Local Node</span>
-                        <ServerIcon className="h-3 w-3" />
+                    <button onClick={() => setState(s => ({ ...s, provider: 'comfyui' }))} className={`flex items-center justify-between px-4 py-2.5 text-[9px] font-black uppercase rounded-xl transition-all ${state.provider === 'comfyui' ? 'bg-orange-600 text-white' : 'text-gray-500 hover:bg-gray-800'}`}>
+                        <span>Local Node</span><ServerIcon className="h-3 w-3" />
                     </button>
-                    <button onClick={() => setState(s => ({ ...s, provider: 'gemini' }))} className={`flex items-center justify-between px-4 py-2.5 text-[9px] font-black uppercase rounded-xl transition-all ${state.provider === 'gemini' ? 'bg-indigo-600 text-white shadow-xl' : 'text-gray-500 hover:bg-gray-800'}`}>
-                        <span>Pure Cloud</span>
-                        <CloudIcon className="h-3 w-3" />
-                    </button>
-                </div>
-
-                <div className="border border-gray-700/50 rounded-2xl p-4 bg-gray-950/40 relative group">
-                    <div className="flex items-center justify-between mb-2">
-                        <span className="text-[9px] font-black text-orange-500 uppercase tracking-widest">Node Status</span>
-                        <div className={`w-1.5 h-1.5 rounded-full ${comfyStatus === 'online' ? 'bg-green-500 animate-pulse shadow-[0_0_8px_#22c55e]' : comfyStatus === 'busy' ? 'bg-orange-500' : 'bg-red-500'}`} />
-                    </div>
-                    <p className={`text-[8px] font-black uppercase tracking-wider mb-4 ${comfyStatus === 'online' ? 'text-green-400' : comfyStatus === 'busy' ? 'text-orange-400' : 'text-red-400'}`}>
-                        {comfyStatus === 'online' ? 'Local GPU IDLE / READY.' : comfyStatus === 'busy' ? 'Local GPU BUSY / QUEUING.' : 'Local Node OFFLINE.'}
-                    </p>
-                    <button onClick={handleResetRealloc} disabled={isResetting} className="w-full py-2 bg-gray-800 hover:bg-gray-700 text-gray-400 text-[8px] font-black uppercase rounded-lg border border-gray-700 transition-all flex items-center justify-center gap-1.5 active:scale-95">
-                        {isResetting ? <LoaderIcon className="h-2.5 w-2.5 animate-spin" /> : <RefreshIcon className="h-2.5 w-2.5" />}
-                        Flush VRAM
+                    <button onClick={() => setState(s => ({ ...s, provider: 'gemini' }))} className={`flex items-center justify-between px-4 py-2.5 text-[9px] font-black uppercase rounded-xl transition-all ${state.provider === 'gemini' ? 'bg-indigo-600 text-white' : 'text-gray-500 hover:bg-gray-800'}`}>
+                        <span>Pure Cloud</span><CloudIcon className="h-3 w-3" />
                     </button>
                 </div>
             </AccordionSection>
 
-            <AccordionSection 
-                title="Source Asset" 
-                icon={<ImageIcon className="h-4 w-4" />}
-                isOpen={openSections.asset}
-                onToggle={() => toggleSection('asset')}
-                indicator={state.sourceImage ? 'green' : 'gray'}
-            >
-                <div className="flex flex-col gap-4">
-                    {state.sourceImage ? (
-                        <div className="relative group/asset-preview">
-                            <div className="w-full aspect-square rounded-2xl bg-gray-950 border-2 border-indigo-500/20 overflow-hidden flex items-center justify-center shadow-inner relative">
-                                <img src={state.sourceImage} alt="Ref Asset" className="w-full h-full object-cover" />
-                            </div>
-                            <div className="absolute inset-0 bg-gray-950/60 opacity-0 group-hover/asset-preview:opacity-100 transition-all flex items-center justify-center rounded-2xl">
-                                <button onClick={() => setState(s => ({ ...s, sourceImage: undefined }))} className="p-3 bg-red-600 text-white rounded-full shadow-2xl hover:scale-110 active:scale-90 transition-all">
-                                    <XIcon className="h-5 w-5" />
-                                </button>
-                            </div>
-                        </div>
-                    ) : (
-                        <div 
-                            onClick={() => document.getElementById('studio-input-sub')?.click()}
-                            className="w-full py-12 border-2 border-dashed border-gray-800 hover:border-indigo-500/40 hover:bg-indigo-500/5 rounded-3xl transition-all flex flex-col items-center justify-center cursor-pointer group"
-                        >
-                            <div className="p-5 bg-gray-900 rounded-2xl border border-gray-800 mb-4 group-hover:scale-110 transition-transform">
-                                <ImageIcon className="h-8 w-8 text-gray-700 group-hover:text-indigo-400" />
-                            </div>
-                            <p className="text-[9px] font-black text-gray-500 uppercase tracking-widest">Awaiting Reference</p>
-                        </div>
-                    )}
-                    <input id="studio-input-sub" type="file" className="hidden" accept="image/*" onChange={e => e.target.files?.[0] && handleFileChange(e.target.files[0])} />
-                </div>
-            </AccordionSection>
-
-            <AccordionSection 
-                title="Logic Blueprint" 
-                icon={<LabIcon className="h-4 w-4" />}
-                isOpen={openSections.blueprint}
-                onToggle={() => toggleSection('blueprint')}
-                indicator={selectedTemplateId === 'custom' ? 'orange' : 'green'}
-            >
-                <div className="relative z-[100]">
-                    <button 
-                        onClick={() => setIsComboOpen(!isComboOpen)}
-                        className="w-full px-4 py-3.5 bg-gray-950 border border-gray-800 rounded-2xl flex items-center justify-between group hover:border-indigo-500/30 transition-all shadow-inner"
-                    >
-                        <div className="text-left min-w-0">
-                            <div className="text-[10px] font-black uppercase text-indigo-400 truncate tracking-tight">{selectedTemplate.name}</div>
-                            <div className="text-[8px] opacity-40 font-bold uppercase truncate tracking-tighter">{selectedTemplate.tip}</div>
-                        </div>
-                        <ChevronDownIcon className={`h-4 w-4 text-gray-600 transition-transform ${isComboOpen ? 'rotate-180' : ''}`} />
-                    </button>
-
-                    {isComboOpen && (
-                        <div className="absolute top-full left-0 right-0 mt-2 bg-gray-900 border border-gray-700 rounded-2xl shadow-[0_25px_60px_rgba(0,0,0,0.8)] z-[200] overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
-                            <div className="max-h-[300px] overflow-y-auto custom-scrollbar p-2 space-y-1">
-                                {COMFY_TEMPLATES.map(t => (
-                                    <button 
-                                        key={t.id} 
-                                        onClick={() => { setSelectedTemplateId(t.id); setIsComboOpen(false); }}
-                                        className={`w-full px-4 py-3 rounded-xl flex items-center justify-between transition-all text-left ${selectedTemplateId === t.id ? 'bg-indigo-600 text-white shadow-lg' : 'hover:bg-gray-800 text-gray-400'}`}
-                                    >
-                                        <div>
-                                            <div className="text-[9px] font-black uppercase tracking-tight">{t.name}</div>
-                                            <div className={`text-[8px] font-bold uppercase ${selectedTemplateId === t.id ? 'text-indigo-200' : 'opacity-40'}`}>{t.tip}</div>
-                                        </div>
-                                        {selectedTemplateId === t.id && <CheckCircleIcon className="h-4 w-4 text-indigo-400" />}
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-                </div>
-
-                {selectedTemplateId === 'custom' && (
-                    <div className="animate-in slide-in-from-top-2 duration-300 pt-1">
-                        <textarea 
-                            value={customWorkflowJson}
-                            onChange={(e) => setCustomWorkflowJson(e.target.value)}
-                            placeholder='Paste Workflow API JSON here...'
-                            className="w-full h-32 bg-gray-950 border border-gray-800 rounded-2xl p-4 text-[10px] font-mono text-indigo-300/70 focus:border-indigo-500/50 outline-none resize-none custom-scrollbar"
-                        />
-                    </div>
-                )}
-            </AccordionSection>
-
-            <AccordionSection 
-                title="Spatial Grid" 
-                icon={<BoxIcon className="h-4 w-4" />}
-                isOpen={openSections.spatial}
-                onToggle={() => toggleSection('spatial')}
-                subValue={`${state.width}×${state.height}px`}
-            >
+            <AccordionSection title="Spatial Grid" icon={<BoxIcon className="h-4 w-4" />} isOpen={openSections.spatial} onToggle={() => toggleSection('spatial')} subValue={`${state.width}×${state.height}px`}>
                 <div className="flex gap-4">
                     <div className="flex flex-col gap-1.5 shrink-0">
                         {RATIO_PRESETS.map(p => (
-                            <button key={p.label} onClick={() => setState(s => ({ ...s, aspectRatio: p.label as any, width: p.w, height: p.h }))} className={`px-2 py-3 text-[9px] font-black rounded-xl border transition-all ${state.aspectRatio === p.label ? 'bg-indigo-600 border-indigo-400 text-white' : 'bg-gray-950 border-gray-800 text-gray-600'}`}>
-                                {p.label}
-                            </button>
+                            <button key={p.label} onClick={() => setState(s => ({ ...s, aspectRatio: p.label as any, width: p.w, height: p.h }))} className={`px-2 py-3 text-[9px] font-black rounded-xl border transition-all ${state.aspectRatio === p.label ? 'bg-indigo-600 text-white' : 'bg-gray-950 border-gray-800 text-gray-600'}`}>{p.label}</button>
                         ))}
                     </div>
                     <div className="flex-grow space-y-4 pr-1">
-                        <div className="space-y-1 relative group">
-                            <label className="text-[8px] font-black text-gray-600 uppercase ml-1">Width Axis</label>
-                            <input type="number" step={PIXEL_STEP} value={state.width} onChange={e => handleDimensionChange('w', parseInt(e.target.value))} className="w-full bg-gray-950 border border-gray-800 rounded-xl px-4 py-2.5 text-xs text-white focus:ring-1 focus:ring-indigo-500 outline-none font-mono" />
-                        </div>
-                        
-                        <div className="flex items-center justify-center py-1">
-                            <button 
-                                onClick={() => setState(s => ({ ...s, lockRatio: !s.lockRatio }))} 
-                                title={state.lockRatio ? "Unlock Aspect Ratio" : "Lock Aspect Ratio"}
-                                className={`p-2.5 rounded-full border shadow-lg transition-all z-10 ${state.lockRatio ? 'bg-indigo-600 border-indigo-400 text-white shadow-indigo-600/30' : 'bg-gray-900 border-gray-700 text-gray-600'}`}
-                            >
-                                <LinkIcon className="h-4 w-4" />
-                            </button>
-                        </div>
-
-                        <div className="space-y-1">
-                            <label className="text-[8px] font-black text-gray-600 uppercase ml-1">Height Axis</label>
-                            <input type="number" step={PIXEL_STEP} value={state.height} onChange={e => handleDimensionChange('h', parseInt(e.target.value))} className="w-full bg-gray-950 border border-gray-800 rounded-xl px-4 py-2.5 text-xs text-white focus:ring-1 focus:ring-indigo-500 outline-none font-mono" />
-                        </div>
+                        <input type="number" step={PIXEL_STEP} value={state.width} onChange={e => handleDimensionChange('w', parseInt(e.target.value))} className="w-full bg-gray-900 border border-gray-800 rounded-xl px-4 py-2 text-xs text-white" />
+                        <button onClick={() => setState(s => ({ ...s, lockRatio: !s.lockRatio }))} className={`w-full p-2 rounded-xl border transition-all ${state.lockRatio ? 'bg-indigo-600 text-white' : 'bg-gray-900 text-gray-500'}`}><LinkIcon className="h-4 w-4 mx-auto" /></button>
+                        <input type="number" step={PIXEL_STEP} value={state.height} onChange={e => handleDimensionChange('h', parseInt(e.target.value))} className="w-full bg-gray-900 border border-gray-800 rounded-xl px-4 py-2 text-xs text-white" />
                     </div>
                 </div>
             </AccordionSection>
 
-            <AccordionSection 
-                title="Mastering & Upscale" 
-                icon={<GlowIcon className="h-4 w-4" />}
-                isOpen={openSections.mastering}
-                onToggle={() => toggleSection('mastering')}
-                subValue={state.masteringActive ? `${state.upscaleFactor}x • ${UPSCALE_MODELS.find(m => m.id === state.masteringModel)?.name.split(' ')[0]}` : 'OFF'}
-            >
-                <div className="space-y-5">
-                    <div className="flex items-center justify-between p-3 bg-gray-950 border border-gray-800 rounded-xl">
-                        <span className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Neural Mastering</span>
-                        <label className="relative inline-flex items-center cursor-pointer">
-                            <input type="checkbox" className="sr-only peer" checked={state.masteringActive} onChange={e => setState(s => ({ ...s, masteringActive: e.target.checked }))} />
-                            <div className="w-9 h-5 bg-gray-700 rounded-full peer peer-checked:bg-indigo-600 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
-                        </label>
-                    </div>
-
-                    <div className={state.masteringActive ? 'space-y-4 opacity-100 transition-opacity' : 'opacity-30 pointer-events-none'}>
-                        <div className="grid grid-cols-2 gap-2">
-                            {[2, 4].map(f => (
-                                <button key={f} onClick={() => setState(s => ({ ...s, upscaleFactor: f as any }))} className={`py-2 rounded-xl text-[10px] font-black border transition-all ${state.upscaleFactor === f ? 'bg-indigo-600 border-indigo-400 text-white shadow-lg' : 'bg-gray-900 border-gray-800 text-gray-500 hover:text-gray-300'}`}>
-                                    Upscale {f}x
-                                </button>
-                            ))}
+            {/* NEURAL VAULT SECTION */}
+            <AccordionSection title="Neural Vault" icon={<DatabaseIcon className="h-4 w-4" />} isOpen={openSections.vault} onToggle={() => toggleSection('vault')} indicator={vault.length > 0 ? 'green' : 'none'}>
+                <div className="space-y-3">
+                    {vault.length === 0 ? (
+                        <p className="text-[8px] text-gray-600 uppercase font-black text-center py-4">No logic segments stored.</p>
+                    ) : vault.map(item => (
+                        <div key={item.id} className="p-2 bg-gray-900 border border-gray-800 rounded-xl group relative overflow-hidden">
+                            <img src={item.image} className="w-full h-24 object-cover rounded-lg mb-2" />
+                            <div className="space-y-1">
+                                <p className="text-[8px] text-gray-400 uppercase font-black truncate">{item.description}</p>
+                                <div className="flex flex-wrap gap-1">
+                                    {item.tags.slice(0, 3).map(t => <span key={t} className="text-[7px] bg-indigo-900/20 text-indigo-400 px-1 py-0.5 rounded uppercase font-black">{t}</span>)}
+                                </div>
+                            </div>
+                            <button onClick={() => setGeneratedImageUrl(item.image)} className="absolute top-2 right-2 p-1.5 bg-indigo-600 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity"><RefreshIcon className="h-3 w-3" /></button>
                         </div>
-                        <div className="space-y-1.5">
-                            <label className="text-[8px] font-black text-gray-600 uppercase ml-1">Inference Model</label>
-                            <select value={state.masteringModel} onChange={e => setState(s => ({ ...s, masteringModel: e.target.value }))} className="w-full bg-gray-950 border border-gray-800 rounded-xl px-3 py-2.5 text-[10px] text-white outline-none focus:border-indigo-500">
-                                {UPSCALE_MODELS.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                            </select>
-                        </div>
-                    </div>
+                    ))}
                 </div>
             </AccordionSection>
 
-            {/* INTEGRATED PROMPT BOX - ARMED & LOADED */}
             <div className="pt-8 px-0.5 pb-20">
                 <div className="bg-gray-800/60 border border-gray-700/50 rounded-[2.5rem] p-6 shadow-2xl backdrop-blur-sm group/prompt relative">
-                    <div className="flex justify-between items-center px-1 mb-4">
-                        <div className="flex flex-col">
-                            <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.4em]">Inference Objective</h3>
-                            <span className="text-[8px] font-black text-indigo-500/50 uppercase tracking-widest mt-1">Logic Sensor Active</span>
-                        </div>
-                        <div className="flex flex-col items-end">
-                            <span className={`text-[9px] font-black px-2 py-0.5 rounded-md border uppercase mb-1 transition-colors ${state.prompt ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20' : 'text-gray-600 border-gray-800'}`}>Tokens: {state.prompt.length}</span>
-                            <div className="w-24 h-1 bg-gray-900 rounded-full overflow-hidden">
-                                <div className={`h-full transition-all duration-500 ${state.provider === 'gemini' ? 'bg-indigo-500 shadow-[0_0_10px_rgba(79,70,229,0.5)]' : 'bg-orange-500 shadow-[0_0_10px_rgba(234,88,12,0.5)]'}`} style={{ width: `${Math.min(100, state.prompt.length / 5)}%` }} />
-                            </div>
-                        </div>
-                    </div>
+                    <span className="text-[10px] font-black text-gray-400 uppercase tracking-[0.4em] mb-4 block">Inference Objective</span>
                     <textarea 
                         value={state.prompt} 
                         onChange={e => setState(s => ({ ...s, prompt: e.target.value }))}
-                        placeholder="Describe the neural visual objective..."
-                        className="w-full h-40 bg-gray-950 border border-gray-800 rounded-2xl p-5 text-sm text-gray-200 resize-none outline-none focus:ring-2 focus:ring-indigo-500/50 leading-relaxed custom-scrollbar shadow-inner transition-all placeholder:opacity-30"
+                        placeholder="Describe the visual objective..."
+                        className="w-full h-40 bg-gray-950 border border-gray-800 rounded-2xl p-5 text-sm text-gray-200 resize-none outline-none focus:ring-2 focus:ring-indigo-500/50"
                     />
-                    <div className="mt-4 flex items-center justify-between px-1">
-                        <div className="flex items-center gap-2 opacity-40 group-hover/prompt:opacity-100 transition-opacity">
-                            <div className={`w-1.5 h-1.5 rounded-full ${state.prompt ? 'bg-indigo-500 animate-pulse shadow-[0_0_10px_#6366f1]' : 'bg-gray-600'}`} />
-                            <span className={`text-[8px] font-black uppercase tracking-[0.2em] ${state.prompt ? 'text-indigo-400' : 'text-gray-500'}`}>{state.provider === 'gemini' ? 'Cloud Synthesis Route' : 'Local VRAM Engine Route'}</span>
-                        </div>
-                        {state.provider === 'comfyui' && (
-                            <div className="flex items-center gap-2">
-                                <div className={`w-1.5 h-1.5 rounded-full ${comfyStatus === 'offline' ? 'bg-red-500 shadow-[0_0_5px_#ef4444]' : 'bg-green-500 shadow-[0_0_5px_#22c55e]'}`} />
-                                <span className={`text-[8px] font-black uppercase tracking-widest ${comfyStatus === 'offline' ? 'text-orange-500' : 'text-green-500'}`}>
-                                    {comfyStatus === 'offline' ? 'UPLINK MANUALLY BYPASSED' : 'UPLINK ESTABLISHED'}
-                                </span>
-                            </div>
-                        )}
-                    </div>
                 </div>
             </div>
           </div>
         </div>
 
-        {/* CANVAS WORKSPACE ZONE */}
+        {/* CANVAS */}
         <div className="lg:col-span-8 xl:col-span-9 flex flex-col h-full overflow-hidden">
-            <div className="flex-grow bg-gray-900/40 border border-gray-700/50 rounded-[4rem] flex flex-col items-center justify-center relative overflow-hidden shadow-2xl backdrop-blur-sm group/canvas">
+            <div 
+                ref={canvasContainerRef}
+                className="flex-grow bg-gray-900/40 border border-gray-700/50 rounded-[4rem] flex flex-col items-center justify-center relative overflow-hidden shadow-2xl backdrop-blur-sm group/canvas"
+                onMouseDown={startRect} onMouseMove={updateRect} onMouseUp={stopRect}
+            >
                 {isGenerating && (
-                    <div className="absolute inset-0 z-[80] flex flex-col items-center justify-center bg-gray-950/95 backdrop-blur-3xl animate-in fade-in duration-500">
-                        <div className="relative">
-                            <LoaderIcon className="h-32 w-32 text-indigo-500 animate-spin mb-8" />
-                            <div className="absolute inset-0 flex items-center justify-center">
-                                <GlowIcon className="h-8 w-8 text-white animate-pulse" />
-                            </div>
-                        </div>
-                        <h4 className="text-4xl font-black text-white uppercase tracking-[0.6em] text-center">Synthesizing</h4>
-                        <p className="text-[11px] font-black text-indigo-400 uppercase tracking-[0.8em] mt-4 opacity-70">
-                            {state.provider === 'comfyui' ? `Local Node • ${selectedTemplate.name}` : 'Cloud Logic Pipeline Active'}
-                        </p>
+                    <div className="absolute inset-0 z-[80] flex flex-col items-center justify-center bg-gray-950/95 backdrop-blur-3xl">
+                        <LoaderIcon className="h-20 w-20 text-indigo-500 animate-spin mb-6" />
+                        <h4 className="text-3xl font-black text-white uppercase tracking-[0.6em]">Synthesizing</h4>
                     </div>
                 )}
 
                 {generatedImageUrl ? (
-                    <div className="relative w-full h-full p-12 flex items-center justify-center animate-in zoom-in-95 duration-700">
-                        <img src={generatedImageUrl} alt="Neural Export" className="max-w-full max-h-full object-contain rounded-[2.5rem] shadow-[0_50px_100px_rgba(0,0,0,0.9)] border border-white/5" />
-                        <div className="absolute bottom-12 right-12 flex gap-4 opacity-0 group-hover/canvas:opacity-100 transition-all translate-y-8 group-hover/canvas:translate-y-0 duration-500">
-                            <button onClick={() => { const a = document.createElement('a'); a.href = generatedImageUrl; a.download = `StudioExport_${Date.now()}.png`; a.click(); }} className="p-6 bg-white text-gray-950 rounded-3xl shadow-2xl transition-all hover:scale-110 active:scale-90"><DownloadIcon className="h-8 w-8" /></button>
-                            <button onClick={() => setGeneratedImageUrl(null)} className="p-6 bg-gray-900 border border-gray-700 text-red-500 rounded-3xl shadow-2xl transition-all hover:scale-110 active:scale-90"><RefreshIcon className="h-8 w-8" /></button>
-                        </div>
-                    </div>
-                ) : error ? (
-                    <div className="h-full flex flex-col items-center justify-center p-12 text-center animate-in zoom-in-95">
-                        <XCircleIcon className="h-20 w-20 text-red-500 mb-6 opacity-80" />
-                        <h3 className="text-3xl font-black text-white uppercase tracking-[0.3em] mb-6">Pipeline Failure</h3>
-                        <div className="bg-red-950/20 border border-red-500/20 p-8 rounded-[2rem] max-w-2xl mb-8 font-mono text-xs text-red-200 leading-relaxed shadow-inner">
-                            {error}
-                        </div>
-                        <div className="flex gap-4">
-                            <button onClick={() => setError(null)} className="px-12 py-4 bg-gray-800 text-white font-black uppercase text-[10px] tracking-widest rounded-xl hover:bg-gray-700 transition-all">Clear Buffer</button>
-                            <button onClick={handleResetRealloc} className="px-12 py-4 bg-red-600 text-white font-black uppercase text-[10px] tracking-widest rounded-xl hover:bg-red-500 transition-all">Node Reset</button>
+                    <div className="relative w-full h-full p-12 flex items-center justify-center">
+                        <img src={generatedImageUrl} alt="Neural Export" className={`max-w-full max-h-full object-contain rounded-[2.5rem] shadow-2xl ${isSpatialMode ? 'cursor-crosshair' : ''}`} />
+                        
+                        {/* SPATIAL OVERLAYS */}
+                        {isSpatialMode && <div className="scanline-effect" />}
+                        {currentRect && (
+                            <div className="absolute pointer-events-none" style={{ left: `calc(12px + ${currentRect.x}%)`, top: `calc(12px + ${currentRect.y}%)`, width: `${currentRect.w}%`, height: `${currentRect.h}%` }}>
+                                <svg width="100%" height="100%" className="overflow-visible">
+                                    <rect x="0" y="0" width="100%" height="100%" fill="none" stroke="#6366f1" strokeWidth="2" className="marching-ants" />
+                                    {isDetecting && <rect x="0" y="0" width="100%" height="100%" fill="rgba(99,102,241,0.2)" />}
+                                </svg>
+                                {detectionResults && detectionResults.sensitivity > sensitivityThreshold && (
+                                    <div className="absolute -top-10 left-0 bg-indigo-600 text-white text-[9px] font-black px-3 py-1.5 rounded-lg shadow-2xl uppercase tracking-widest flex items-center gap-2 whitespace-nowrap animate-in slide-in-from-bottom-2">
+                                        <TargetIcon className="h-3 w-3" />
+                                        Detected: {detectionResults.tags[0]} ({Math.round(detectionResults.sensitivity * 100)}%)
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        <div className="absolute bottom-12 right-12 flex gap-4 opacity-0 group-hover/canvas:opacity-100 transition-all">
+                            <button onClick={() => setIsSpatialMode(!isSpatialMode)} className={`p-6 rounded-3xl shadow-2xl transition-all ${isSpatialMode ? 'bg-indigo-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`} title="Spatial Logic Mode">
+                                <TargetIcon className="h-8 w-8" />
+                            </button>
+                            <button onClick={() => { const a = document.createElement('a'); a.href = generatedImageUrl; a.download = `Export.png`; a.click(); }} className="p-6 bg-white text-gray-950 rounded-3xl shadow-2xl"><DownloadIcon className="h-8 w-8" /></button>
                         </div>
                     </div>
                 ) : (
-                    <div 
-                        onDrop={(e) => { e.preventDefault(); setIsDraggingAsset(false); if (e.dataTransfer.files?.[0]) handleFileChange(e.dataTransfer.files[0]); }}
-                        onDragOver={(e) => { e.preventDefault(); setIsDraggingAsset(true); }}
-                        onDragLeave={() => setIsDraggingAsset(false)}
-                        className={`h-full w-full flex flex-col items-center justify-center transition-all duration-500 cursor-pointer ${isDraggingAsset ? 'bg-indigo-600/10' : ''}`}
-                        onClick={() => document.getElementById('studio-input-main')?.click()}
-                    >
-                        <input id="studio-input-main" type="file" className="hidden" accept="image/*" onChange={e => e.target.files?.[0] && handleFileChange(e.target.files[0])} />
-                        <div className="text-center opacity-10 grayscale py-20 pointer-events-none">
-                            <div className="relative mb-8">
-                                <BoxIcon className="h-48 w-48 mx-auto text-gray-500" />
-                                <div className="absolute inset-0 bg-indigo-500 blur-[120px] opacity-20 animate-pulse"></div>
+                    <div className="text-center opacity-10 grayscale py-20 pointer-events-none">
+                        <BoxIcon className="h-48 w-48 mx-auto text-gray-500" />
+                        <h4 className="text-5xl font-black uppercase tracking-[0.8em] mt-8">Canvas Idle</h4>
+                    </div>
+                )}
+
+                {/* SPATIAL SECTOR HUD */}
+                {isSpatialMode && currentRect && detectionResults && (
+                    <div className="absolute bottom-12 left-1/2 -translate-x-1/2 bg-gray-900/90 backdrop-blur-xl border border-indigo-500/30 p-6 rounded-[2.5rem] shadow-[0_50px_100px_rgba(0,0,0,0.8)] z-[100] w-full max-w-xl animate-in slide-in-from-bottom-10">
+                        <div className="flex items-center justify-between mb-6">
+                            <div className="flex items-center gap-3">
+                                <TargetIcon className="h-5 w-5 text-indigo-400" />
+                                <span className="text-[10px] font-black uppercase text-white tracking-widest">Logic Segment Protocol</span>
                             </div>
-                            <h4 className="text-5xl font-black uppercase tracking-[0.8em] mb-4 text-gray-100">Canvas Idle</h4>
-                            <p className="text-sm font-black uppercase tracking-[0.5em] opacity-60 leading-loose text-gray-400">Establish Architecture • Deploy Prompt • Synthesize</p>
+                            <button onClick={() => { setIsSpatialMode(false); setCurrentRect(null); }} className="text-gray-500 hover:text-white"><XIcon className="h-5 w-5" /></button>
                         </div>
-                        {isDraggingAsset && (
-                            <div className="absolute inset-0 border-4 border-dashed border-indigo-500/50 rounded-[4rem] animate-pulse m-8"></div>
-                        )}
+                        
+                        <div className="space-y-6">
+                            <div className="space-y-2">
+                                <div className="flex justify-between text-[9px] font-black uppercase tracking-widest text-gray-500">
+                                    <span>Sensitivity Threshold</span>
+                                    <span className="text-indigo-400">{Math.round(sensitivityThreshold * 100)}%</span>
+                                </div>
+                                <input type="range" min="0" max="1" step="0.01" value={sensitivityThreshold} onChange={e => setSensitivityThreshold(parseFloat(e.target.value))} className="w-full h-1 bg-gray-800 rounded-full appearance-none accent-indigo-600 cursor-pointer" />
+                            </div>
+
+                            <div className="bg-black/40 rounded-2xl p-4 border border-gray-800">
+                                <span className="text-[9px] font-black text-gray-600 uppercase mb-2 block">Neural Transformation Instruction</span>
+                                <div className="flex gap-3">
+                                    <input 
+                                        type="text" value={regenPrompt} onChange={e => setRegenPrompt(e.target.value)}
+                                        placeholder="Enter transformation prompt..."
+                                        className="flex-grow bg-transparent border-none focus:ring-0 text-sm text-gray-200"
+                                    />
+                                    <button onClick={handleRegenSegment} disabled={isGenerating} className="px-6 py-2.5 bg-indigo-600 text-white text-[9px] font-black uppercase rounded-xl hover:bg-indigo-500 transition-all flex items-center gap-2">
+                                        {isGenerating ? <LoaderIcon className="h-3 w-3 animate-spin" /> : <RefreshIcon className="h-3 w-3" />}
+                                        Regen
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 )}
             </div>

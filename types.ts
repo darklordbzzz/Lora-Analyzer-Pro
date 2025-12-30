@@ -109,7 +109,7 @@ export interface LoraAnalysis {
   timestamp?: number;
 }
 
-export type AppView = 'models' | 'images' | 'video' | 'audio' | 'chat' | 'studio' | 'imageStudio' | 'help';
+export type AppView = 'models' | 'images' | 'video' | 'audio' | 'chat' | 'studio' | 'imageStudio' | 'dataset' | 'help';
 
 export interface ChatAttachment {
   name: string;
@@ -168,6 +168,24 @@ export interface ImageStudioState {
   upscaleFactor?: UpscaleFactor;
   localUpscalerModel?: string;
   masteringModel?: string;
+}
+
+export interface DatasetItem {
+  id: string;
+  file: File;
+  thumbnail: string;
+  tags: string[];
+  caption: string;
+  status: 'idle' | 'processing' | 'done' | 'error';
+}
+
+export interface TrainingLabState {
+  baseModel: string;
+  trainingType: 'Style' | 'Concept' | 'Character';
+  optimizer: string;
+  epochs: number;
+  rank: number;
+  alpha: number;
 }
 
 export interface VideoStudioState {
