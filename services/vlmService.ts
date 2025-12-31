@@ -1,10 +1,9 @@
 
 import { GoogleGenAI, Modality } from "@google/genai";
-import type { LLMModel } from '../types';
+import type { LLMModel, ChatMessage } from '../types';
 
 /**
- * Enhanced Universal Multimodal Request Bridge
- * Handles routing to Gemini, Ollama (Vision), and OpenAI-compatible endpoints.
+ * Universal Multimodal Request Bridge
  */
 export const executeVLMAction = async (
   model: LLMModel,
@@ -13,13 +12,12 @@ export const executeVLMAction = async (
     system?: string, 
     images?: { data: string, mimeType: string }[],
     json?: boolean,
-    audio?: boolean,
-    temperature?: number
+    audio?: boolean
   } = {}
 ) => {
   const provider = model.provider;
 
-  // 1. GEMINI NATIVE ROUTING
+  // 1. GEMINI ROUTING (Native SDK)
   if (provider === 'gemini') {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const parts: any[] = (options.images || []).map(img => ({
@@ -32,34 +30,27 @@ export const executeVLMAction = async (
       contents: { parts },
       config: { 
         systemInstruction: options.system,
-        responseMimeType: options.json ? "application/json" : undefined,
-        temperature: options.temperature ?? 0.7
+        responseMimeType: options.json ? "application/json" : undefined
       }
     });
     return response.text;
   }
 
-  // 2. UNIVERSAL PROVIDER (OpenAI / Ollama / Custom API)
+  // 2. OPENAI / OLLAMA / CUSTOM ROUTING (Standard API)
   const baseUrl = (model.apiUrl || (provider === 'ollama' ? 'http://localhost:11434/v1' : '')).replace(/\/$/, '');
   const endpoint = options.audio ? `${baseUrl}/audio/speech` : `${baseUrl}/chat/completions`;
 
   const messages: any[] = [];
   if (options.system) messages.push({ role: 'system', content: options.system });
 
-  // Handle Vision capability detection for non-Gemini models
-  const hasImages = options.images && options.images.length > 0;
-  let userContent: any;
-
-  if (hasImages) {
-    userContent = [{ type: 'text', text: prompt }];
-    options.images?.forEach(img => {
+  const userContent: any[] = [{ type: 'text', text: prompt }];
+  if (options.images) {
+    options.images.forEach(img => {
       userContent.push({
         type: 'image_url',
         image_url: { url: `data:${img.mimeType};base64,${img.data}` }
       });
     });
-  } else {
-    userContent = prompt;
   }
 
   messages.push({ role: 'user', content: userContent });
@@ -68,21 +59,19 @@ export const executeVLMAction = async (
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      ...(model.apiKey ? { 'Authorization': `Bearer ${model.apiKey}` } : {}),
-      ...(model.customHeaders?.reduce((acc, h) => ({ ...acc, [h.key]: h.value }), {}) || {})
+      ...(model.apiKey ? { 'Authorization': `Bearer ${model.apiKey}` } : {})
     },
     body: JSON.stringify({
       model: model.modelName,
       messages,
       response_format: options.json ? { type: 'json_object' } : undefined,
-      temperature: options.temperature ?? 0.7,
       stream: false
     })
   });
 
   if (!response.ok) {
     const err = await response.text();
-    throw new Error(`Kernel Error (${provider}): ${err || response.statusText}`);
+    throw new Error(`VLM Provider Error: ${err}`);
   }
 
   const data = await response.json();
@@ -90,6 +79,7 @@ export const executeVLMAction = async (
 };
 
 export const generateTTS = async (text: string, model: LLMModel) => {
+  // If Gemini, use the native audio modality
   if (model.provider === 'gemini') {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const response = await ai.models.generateContent({
@@ -105,32 +95,28 @@ export const generateTTS = async (text: string, model: LLMModel) => {
     return response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
   }
 
-  // Fallback: OpenAI-compatible /v1/audio/speech
-  const baseUrl = model.apiUrl?.replace(/\/v1\/?$/, '') || 'http://localhost:11434';
-  try {
-    const response = await fetch(`${baseUrl}/v1/audio/speech`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(model.apiKey ? { 'Authorization': `Bearer ${model.apiKey}` } : {})
-      },
-      body: JSON.stringify({
-        model: 'tts-1',
-        input: text,
-        voice: 'alloy'
-      })
+  // Fallback to OpenAI-compatible TTS if available
+  const baseUrl = model.apiUrl?.replace(/\/v1\/?$/, '') || '';
+  const response = await fetch(`${baseUrl}/v1/audio/speech`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(model.apiKey ? { 'Authorization': `Bearer ${model.apiKey}` } : {})
+    },
+    body: JSON.stringify({
+      model: 'tts-1',
+      input: text,
+      voice: 'alloy'
+    })
+  });
+  
+  if (response.ok) {
+    const blob = await response.blob();
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
+      reader.readAsDataURL(blob);
     });
-    
-    if (response.ok) {
-      const blob = await response.blob();
-      return new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
-        reader.readAsDataURL(blob);
-      });
-    }
-  } catch (e) {
-    console.warn("TTS Backend unreachable.");
   }
   return null;
 };

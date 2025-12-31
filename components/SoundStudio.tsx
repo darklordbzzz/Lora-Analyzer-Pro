@@ -1,11 +1,10 @@
 
-import React, { useState, useRef } from 'react';
+import React, { useState } from 'react';
 import { SoundStudioState, LLMModel } from '../types';
 import { 
-    BoxIcon, AudioIcon, LoaderIcon, RobotIcon, SparklesIcon, ChevronDownIcon, DownloadIcon, RefreshIcon
+    BoxIcon, AudioIcon, LoaderIcon, RobotIcon, SparklesIcon, ChevronDownIcon 
 } from './Icons';
 import { composeMusicComposition } from '../services/llmService';
-import { generateStudioAudio } from '../services/audioGenerationService';
 import * as vlm from '../services/vlmService';
 
 interface SoundStudioProps {
@@ -33,9 +32,6 @@ const SoundStudio: React.FC<SoundStudioProps> = ({ initialState, activeModel }) 
 
     const [isGenerating, setIsGenerating] = useState(false);
     const [isVocalizing, setIsVocalizing] = useState(false);
-    const [isRenderingAudio, setIsRenderingAudio] = useState(false);
-    const [renderStatus, setRenderStatus] = useState('');
-    const [generatedAudioUrl, setGeneratedAudioUrl] = useState<string | null>(null);
 
     const handleGenerateComposition = async () => {
         setIsGenerating(true);
@@ -55,22 +51,6 @@ const SoundStudio: React.FC<SoundStudioProps> = ({ initialState, activeModel }) 
                 audio.play();
             }
         } catch (e) { console.error(e); } finally { setIsVocalizing(false); }
-    };
-
-    const handleAudioGenesis = async () => {
-        setIsRenderingAudio(true);
-        setRenderStatus('Allocating VRAM...');
-        try {
-            await new Promise(r => setTimeout(r, 1000));
-            setRenderStatus('Synthesizing Waveforms...');
-            const url = await generateStudioAudio(state.description || state.genre, { genre: state.genre, bpm: state.bpm });
-            setGeneratedAudioUrl(url);
-            setRenderStatus('Mastering Complete.');
-        } catch (e) {
-            setRenderStatus('Pipeline Fault.');
-        } finally {
-            setIsRenderingAudio(false);
-        }
     };
 
     return (
@@ -93,47 +73,16 @@ const SoundStudio: React.FC<SoundStudioProps> = ({ initialState, activeModel }) 
                                     {GENRES.map(g => <option key={g} value={g}>{g}</option>)}
                                 </select>
                             </div>
-                            <div>
-                                <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1 ml-1">BPM Master</label>
-                                <input type="number" value={state.bpm} onChange={e => setState({ ...state, bpm: parseInt(e.target.value) })} className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white outline-none" />
-                            </div>
                         </div>
-                        
-                        <div className="space-y-2">
-                            <button onClick={handleGenerateComposition} disabled={isGenerating} className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-black uppercase tracking-widest text-[10px] rounded-xl shadow-lg flex items-center justify-center gap-2 transition-all">
-                                {isGenerating ? <LoaderIcon className="h-4 w-4 animate-spin" /> : <SparklesIcon className="h-4 w-4" />}
-                                Execute Blueprint
-                            </button>
-
-                            <button onClick={handleAudioGenesis} disabled={isRenderingAudio} className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-black uppercase tracking-widest text-[10px] rounded-xl shadow-lg flex items-center justify-center gap-2 transition-all">
-                                {isRenderingAudio ? <LoaderIcon className="h-4 w-4 animate-spin" /> : <AudioIcon className="h-4 w-4" />}
-                                {isRenderingAudio ? 'Rendering...' : 'Audio Genesis'}
-                            </button>
-                        </div>
-                        
-                        {renderStatus && (
-                            <div className="p-3 bg-black/40 rounded-xl border border-white/5">
-                                <p className="text-[9px] font-black text-emerald-400 uppercase tracking-widest animate-pulse">{renderStatus}</p>
-                            </div>
-                        )}
+                        <button onClick={handleGenerateComposition} disabled={isGenerating} className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-black uppercase tracking-widest text-[10px] rounded-xl shadow-lg flex items-center justify-center gap-2 transition-all">
+                            {isGenerating ? <LoaderIcon className="h-4 w-4 animate-spin" /> : <SparklesIcon className="h-4 w-4" />}
+                            Execute Blueprint
+                        </button>
                     </div>
                 </div>
 
                 <div className="lg:col-span-8 xl:col-span-9 flex flex-col gap-6 overflow-hidden h-full">
-                    {generatedAudioUrl && (
-                        <div className="bg-emerald-950/20 border border-emerald-500/20 rounded-2xl p-6 flex items-center gap-6 animate-in slide-in-from-top-4 duration-500">
-                            <div className="p-4 bg-emerald-500 rounded-2xl text-white shadow-lg">
-                                <AudioIcon className="h-8 w-8" />
-                            </div>
-                            <div className="flex-grow space-y-2">
-                                <h4 className="text-xs font-black text-white uppercase tracking-widest">Acoustic Master Ready</h4>
-                                <audio src={generatedAudioUrl} controls className="w-full h-10" />
-                            </div>
-                            <button onClick={() => setGeneratedAudioUrl(null)} className="p-2 text-emerald-500 hover:text-white"><RefreshIcon className="h-5 w-5" /></button>
-                        </div>
-                    )}
-
-                    <div className="bg-gray-800/50 border border-gray-700/50 rounded-2xl overflow-hidden flex flex-col h-[35%] shadow-xl">
+                    <div className="bg-gray-800/50 border border-gray-700/50 rounded-2xl overflow-hidden flex flex-col h-[40%] shadow-xl">
                         <div className="px-5 py-3 border-b border-gray-700 bg-gray-800/80 flex justify-between items-center">
                             <h3 className="text-xs font-black text-green-400 uppercase tracking-widest flex items-center gap-2">
                                 <AudioIcon className="h-4 w-4" /> Lyric Sheet

@@ -109,7 +109,7 @@ export interface LoraAnalysis {
   timestamp?: number;
 }
 
-export type AppView = 'models' | 'images' | 'video' | 'audio' | 'chat' | 'studio' | 'imageStudio' | 'dataset' | 'help';
+export type AppView = 'models' | 'images' | 'video' | 'audio' | 'chat' | 'studio' | 'imageStudio' | 'help';
 
 export interface ChatAttachment {
   name: string;
@@ -148,11 +148,11 @@ export interface AudioAnalysisResult {
 }
 
 export interface ImageAnalysisResult {
-  imageDescriptor: string;
-  styleDescriptor: string;
-  lightingDescriptor: string;
-  techniqueDescriptor: string;
-  colorGammaDescriptor: string;
+  compositionDescriptor: string;
+  artisticStyle: string;
+  lightingIllumination: string;
+  technique: string;
+  colorGamma: string;
   suggestedArtists: string[];
 }
 
@@ -168,24 +168,6 @@ export interface ImageStudioState {
   upscaleFactor?: UpscaleFactor;
   localUpscalerModel?: string;
   masteringModel?: string;
-}
-
-export interface DatasetItem {
-  id: string;
-  file: File;
-  thumbnail: string;
-  tags: string[];
-  caption: string;
-  status: 'idle' | 'processing' | 'done' | 'error';
-}
-
-export interface TrainingLabState {
-  baseModel: string;
-  trainingType: 'Style' | 'Concept' | 'Character';
-  optimizer: string;
-  epochs: number;
-  rank: number;
-  alpha: number;
 }
 
 export interface VideoStudioState {

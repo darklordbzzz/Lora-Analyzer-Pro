@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { SettingsIcon, ImageIcon, AudioIcon, ChatIcon, BoxIcon, HelpIcon, VideoIcon, DatabaseIcon } from './Icons';
+import { SettingsIcon, ImageIcon, AudioIcon, ChatIcon, BoxIcon, HelpIcon, VideoIcon } from './Icons';
 import type { LLMModel, AppView } from '../types';
 import ModelSelector from './ModelSelector';
 
@@ -55,7 +55,6 @@ const Header: React.FC<HeaderProps> = ({
                   <button onClick={() => onViewChange('video')} onDragOver={handleDragOverTab('video')} className={navButtonClass('video')}><VideoIcon className="h-3.5 w-3.5" />Video</button>
                   <button onClick={() => onViewChange('audio')} onDragOver={handleDragOverTab('audio')} className={navButtonClass('audio')}><AudioIcon className="h-3.5 w-3.5" />Audio</button>
                   <button onClick={() => onViewChange('chat')} onDragOver={handleDragOverTab('chat')} className={navButtonClass('chat')}><ChatIcon className="h-3.5 w-3.5" />Chat</button>
-                  <button onClick={() => onViewChange('dataset')} onDragOver={handleDragOverTab('dataset')} className={navButtonClass('dataset')}><DatabaseIcon className="h-3.5 w-3.5" />Dataset Forge</button>
                   <button onClick={() => onViewChange('studio')} onDragOver={handleDragOverTab('studio')} className={navButtonClass('studio')}><BoxIcon className="h-3.5 w-3.5" />Sound Studio</button>
                   <button onClick={() => onViewChange('imageStudio')} onDragOver={handleDragOverTab('imageStudio')} className={navButtonClass('imageStudio')}><BoxIcon className="h-3.5 w-3.5" />Image Studio</button>
                   <button onClick={() => onViewChange('help')} onDragOver={handleDragOverTab('help')} className={navButtonClass('help')}><HelpIcon className="h-3.5 w-3.5" />HelpIndex</button>
