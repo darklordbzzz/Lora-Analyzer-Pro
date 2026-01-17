@@ -63,7 +63,8 @@ const OllamaIntegration: React.FC<OllamaIntegrationProps> = ({ onSyncModels, cur
     const fetchModels = async () => {
         try {
             const response = await getInstalledModels(baseUrl);
-            const models = response.models.sort((a, b) => new Date(b.modified_at).getTime() - new Date(a.modified_at).getTime());
+            const modelsRaw = response.models || [];
+            const models = modelsRaw.sort((a, b) => new Date(b.modified_at).getTime() - new Date(a.modified_at).getTime());
             setInstalledModels(models);
             
             // Auto-sync with parent application
@@ -167,128 +168,4 @@ const OllamaIntegration: React.FC<OllamaIntegrationProps> = ({ onSyncModels, cur
                                     onChange={e => setPullModelName(e.target.value)}
                                     onKeyDown={e => e.key === 'Enter' && handlePull()}
                                     placeholder="Enter model name (e.g. llama3.2, mistral)"
-                                    className="flex-grow px-4 py-3 bg-gray-900 border border-gray-800 rounded-xl text-white text-xs font-mono placeholder:text-gray-700 focus:border-indigo-500 outline-none"
-                                />
-                                <button 
-                                    onClick={handlePull}
-                                    disabled={isPulling || !pullModelName.trim() || !isConnected}
-                                    className="px-6 bg-indigo-600 hover:bg-indigo-500 text-white font-black uppercase tracking-widest text-[10px] rounded-xl transition-all shadow-lg active:scale-95 disabled:opacity-30 flex items-center gap-2"
-                                >
-                                    {isPulling ? <LoaderIcon className="h-4 w-4 animate-spin" /> : <PlusIcon className="h-4 w-4" />}
-                                    Pull Node
-                                </button>
-                            </div>
-                        </div>
-
-                        {/* TERMINAL UI */}
-                        <div className="flex-grow flex flex-col bg-black rounded-2xl border border-gray-800 overflow-hidden group">
-                            <div className="flex items-center justify-between px-4 py-2 bg-gray-900 border-b border-gray-800">
-                                <div className="flex items-center gap-2">
-                                    <TerminalIcon className="h-3 w-3 text-gray-500" />
-                                    <span className="text-[9px] font-black text-gray-500 uppercase tracking-widest">Neural Pull Log</span>
-                                </div>
-                                {isPulling && (
-                                    <span className="text-[9px] font-black text-indigo-400 animate-pulse">{pullPercent}% COMPLETED</span>
-                                )}
-                            </div>
-                            <div className="flex-grow p-4 font-mono text-[10px] overflow-y-auto custom-scrollbar space-y-1">
-                                {terminalLogs.length === 0 ? (
-                                    <div className="h-full flex items-center justify-center opacity-20 italic">
-                                        System idle. Awaiting pull command...
-                                    </div>
-                                ) : (
-                                    terminalLogs.map((log, i) => (
-                                        <div key={i} className="text-indigo-400/80 leading-tight">
-                                            <span className="text-indigo-600 mr-2">$</span>
-                                            {log}
-                                        </div>
-                                    ))
-                                )}
-                                <div ref={consoleEndRef} />
-                            </div>
-                            {isPulling && (
-                                <div className="h-1 bg-gray-900 overflow-hidden">
-                                    <div 
-                                        className="h-full bg-indigo-500 transition-all duration-300 shadow-[0_0_10px_#6366f1]" 
-                                        style={{ width: `${pullPercent}%` }} 
-                                    />
-                                </div>
-                            )}
-                        </div>
-                    </div>
-
-                    {error && (
-                        <div className="p-4 bg-red-950/20 border border-red-500/30 rounded-2xl animate-in shake duration-500 flex items-center gap-3">
-                            <XCircleIcon className="h-5 w-5 text-red-500" />
-                            <p className="text-[10px] text-red-200/70 font-mono uppercase leading-relaxed">{error}</p>
-                        </div>
-                    )}
-                </div>
-
-                {/* REGISTRY SIDEBAR */}
-                <div className="lg:col-span-5 flex flex-col gap-4 h-full">
-                    <div className="bg-gray-950 border border-gray-800 rounded-3xl p-6 flex flex-col gap-6 shadow-2xl relative overflow-hidden h-full">
-                        <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest flex items-center gap-2">
-                            <BoxIcon className="h-4 w-4" /> Node Registry
-                        </h3>
-                        <div className="flex-grow overflow-y-auto custom-scrollbar space-y-2 pr-1">
-                            {installedModels.length === 0 ? (
-                                <div className="h-48 flex flex-col items-center justify-center text-center opacity-20 border border-dashed border-gray-700 rounded-2xl">
-                                    <BoxIcon className="h-10 w-10 mb-3" />
-                                    <p className="text-[9px] font-black uppercase">Registry Empty</p>
-                                </div>
-                            ) : (
-                                installedModels.map(model => {
-                                    const isCurrentlyActive = activeModelId === `ollama-${model.name}`;
-                                    return (
-                                        <div 
-                                            key={model.digest} 
-                                            onClick={() => handleSelectModel(model)}
-                                            className={`p-4 bg-gray-900 border rounded-2xl flex items-center justify-between group transition-all cursor-pointer ${isCurrentlyActive ? 'border-indigo-500/50 bg-indigo-500/5 shadow-lg' : 'border-gray-800 hover:border-gray-700'}`}
-                                        >
-                                            <div className="flex items-center gap-4 min-w-0">
-                                                <div className={`p-2 rounded-lg transition-colors ${isCurrentlyActive ? 'bg-indigo-600 text-white' : 'bg-indigo-900/20 text-indigo-400'}`}>
-                                                    <BoxIcon className="h-4 w-4" />
-                                                </div>
-                                                <div className="min-w-0">
-                                                    <div className="flex items-center gap-2">
-                                                        <span className="text-xs font-bold text-white block truncate uppercase tracking-tighter">{model.name}</span>
-                                                        {isCurrentlyActive && <div className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_5px_#22c55e]" />}
-                                                    </div>
-                                                    <div className="text-[8px] text-gray-500 uppercase font-mono flex gap-2 mt-1">
-                                                        <span>{formatBytes(model.size)}</span>
-                                                        <span>•</span>
-                                                        <span>{model.details.parameter_size}</span>
-                                                        <span>•</span>
-                                                        <span>{model.details.quantization_level}</span>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                            <button 
-                                                onClick={(e) => handleDelete(model.name, e)} 
-                                                className="p-2 text-gray-700 hover:text-red-400 transition-all opacity-0 group-hover:opacity-100"
-                                            >
-                                                <TrashIcon className="h-4 w-4" />
-                                            </button>
-                                        </div>
-                                    );
-                                })
-                            )}
-                        </div>
-                        <div className="bg-indigo-600/10 border border-indigo-500/20 rounded-2xl p-4">
-                            <div className="flex items-center gap-3 mb-2">
-                                <InfoIcon className="h-4 w-4 text-indigo-400" />
-                                <span className="text-[9px] font-black text-indigo-300 uppercase tracking-widest">Protocol Notice</span>
-                            </div>
-                            <p className="text-[10px] text-indigo-200/50 leading-relaxed uppercase tracking-tighter">
-                                Ollama service must be reachable at 127.0.0.1:11434 with CORS enabled (OLLAMA_ORIGINS="*"). Models are persisted on local storage.
-                            </p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    );
-};
-
-export default OllamaIntegration;
+                                    className="flex-grow px-4 py-3 bg-gray-900 border border-gray-800 rounded-xl text-

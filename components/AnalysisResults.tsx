@@ -11,8 +11,8 @@ interface AnalysisResultsProps {
   activeModel?: LLMModel;
 }
 
-const AnalysisResults: React.FC<AnalysisResultsProps> = ({ results, onDelete, onRetry, canRetry, activeModel }) => {
-  if (results.length === 0) {
+const AnalysisResults: React.FC<AnalysisResultsProps> = ({ results = [], onDelete, onRetry, canRetry, activeModel }) => {
+  if (!results || results.length === 0) {
     return null;
   }
 

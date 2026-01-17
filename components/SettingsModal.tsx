@@ -197,11 +197,10 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                 
                 {activeTab === 'core' && (
                     <div className="animate-in fade-in slide-in-from-bottom-4 duration-700 h-full">
+                        {/* Fix: Removed activeModelId and onAddModel as they are not defined in NeuralEngineSetupProps */}
                         <NeuralEngineSetup 
                           onActivateEngine={handleActivateEngine} 
-                          activeModelId={models.find(m => m.apiUrl === 'integrated://core')?.id} 
                           allModels={models}
-                          onAddModel={handleAddModel}
                           onDeleteModel={handleDeleteModel}
                         />
                     </div>

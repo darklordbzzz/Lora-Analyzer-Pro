@@ -1,92 +1,159 @@
+import { GoogleGenAI, Type, Modality } from "@google/genai";
 
-import { GoogleGenAI, Modality, Type } from "@google/genai";
+// Initialize AI client lazily to ensure environment variables are loaded
+const getAI = () => new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
 
-const getAI = () => new GoogleGenAI({ apiKey: process.env.API_KEY });
+export interface AnalysisResult {
+  modelType: string;
+  modelFamily: string;
+  baseModel: string;
+  triggerWords: string[];
+  usageTips: string[];
+  tags: string[];
+  confidence: number;
+}
 
-export const generateText = async (prompt: string, model: string = 'gemini-3-flash-preview', systemInstruction?: string) => {
+/**
+ * Technical audit of AI assets (Safetensors, GGUF, etc.)
+ */
+export const analyzeModel = async (file: { name: string; metadata: string; previewData?: string }): Promise<AnalysisResult> => {
   const ai = getAI();
-  const response = await ai.models.generateContent({
-    model,
-    contents: prompt,
-    config: { systemInstruction }
-  });
-  return response.text;
-};
+  const prompt = `Perform a professional audit of this AI model asset. 
+    Name: ${file.name}
+    Metadata Sample: ${file.metadata.substring(0, 8000)}
+    Analyze technical headers to identify architecture and usage. Return structured JSON.`;
 
-export const generateTextStream = async (prompt: string, model: string = 'gemini-3-flash-preview', systemInstruction?: string, onChunk?: (text: string) => void) => {
-  const ai = getAI();
-  const response = await ai.models.generateContentStream({
-    model,
-    contents: prompt,
-    config: { systemInstruction }
-  });
-  for await (const chunk of response) {
-    if (onChunk) onChunk(chunk.text || '');
+  const parts: any[] = [{ text: prompt }];
+  if (file.previewData) {
+    parts.push({ 
+      inlineData: { 
+        data: file.previewData, 
+        mimeType: 'image/png' 
+      } 
+    });
   }
-};
 
-export const analyzeMultimodal = async (prompt: string, parts: any[], model: string = 'gemini-3-flash-preview') => {
-  const ai = getAI();
   const response = await ai.models.generateContent({
-    model,
-    contents: { parts: [...parts, { text: prompt }] },
-  });
-  return response.text;
-};
-
-export const generateImage = async (prompt: string, aspectRatio: "1:1" | "3:4" | "4:3" | "9:16" | "16:9" = "1:1") => {
-  const ai = getAI();
-  const response = await ai.models.generateContent({
-    model: 'gemini-3-pro-image-preview',
-    contents: { parts: [{ text: prompt }] },
-    config: {
-      imageConfig: { aspectRatio, imageSize: "1K" }
-    }
-  });
-  
-  for (const part of response.candidates?.[0]?.content?.parts || []) {
-    if (part.inlineData) {
-      return `data:image/png;base64,${part.inlineData.data}`;
-    }
-  }
-  throw new Error("No image data returned from Gemini");
-};
-
-export const generateVocalDuo = async (text: string) => {
-  const ai = getAI();
-  const response = await ai.models.generateContent({
-    model: "gemini-2.5-flash-preview-tts",
-    contents: [{ parts: [{ text }] }],
-    config: {
-      responseModalities: [Modality.AUDIO],
-      speechConfig: {
-        multiSpeakerVoiceConfig: {
-          speakerVoiceConfigs: [
-            { speaker: 'Joe', voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } },
-            { speaker: 'Jane', voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Puck' } } }
-          ]
-        }
+    model: 'gemini-3-flash-preview',
+    contents: { parts },
+    config: { 
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          modelType: { type: Type.STRING },
+          modelFamily: { type: Type.STRING },
+          baseModel: { type: Type.STRING },
+          triggerWords: { type: Type.ARRAY, items: { type: Type.STRING } },
+          usageTips: { type: Type.ARRAY, items: { type: Type.STRING } },
+          tags: { type: Type.ARRAY, items: { type: Type.STRING } },
+          confidence: { type: Type.NUMBER }
+        },
+        required: ["modelType", "modelFamily", "baseModel", "triggerWords", "confidence"]
       }
     }
   });
-  return response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+
+  try {
+    return JSON.parse(response.text || '{}');
+  } catch (err) {
+    console.error("Failed to parse analysis result:", err);
+    throw new Error("Neural analysis parsing failed.");
+  }
 };
 
-export const decodeAudioPCM = async (base64Data: string, sampleRate: number = 24000) => {
-  const binaryString = atob(base64Data);
-  const bytes = new Uint8Array(binaryString.length);
-  for (let i = 0; i < binaryString.length; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
+/**
+ * High-speed image synthesis using Gemini Flash Image
+ */
+export const generateImage = async (state: { prompt: string; aspectRatio: string }) => {
+  const ai = getAI();
+  const response = await ai.models.generateContent({
+    model: 'gemini-2.5-flash-image',
+    contents: { parts: [{ text: state.prompt }] },
+    config: {
+      imageConfig: {
+        aspectRatio: state.aspectRatio as any
+      }
+    }
+  });
+
+  const imagePart = response.candidates?.[0]?.content?.parts.find(p => p.inlineData);
+  if (imagePart?.inlineData) {
+    return `data:image/png;base64,${imagePart.inlineData.data}`;
   }
   
-  const ctx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate });
-  const dataInt16 = new Int16Array(bytes.buffer);
-  const frameCount = dataInt16.length;
-  const buffer = ctx.createBuffer(1, frameCount, sampleRate);
-  const channelData = buffer.getChannelData(0);
+  throw new Error("Neural synthesis failed: No image data returned.");
+};
+
+/**
+ * Specialized image-to-image editing for retouching tasks
+ */
+export const editImage = async (imageFile: File | string, prompt: string, referenceFiles: File[] = []) => {
+  const ai = getAI();
   
-  for (let i = 0; i < frameCount; i++) {
-    channelData[i] = dataInt16[i] / 32768.0;
+  const fileToPart = async (file: File | string): Promise<any> => {
+    if (typeof file === 'string' && file.startsWith('data:')) {
+      return { inlineData: { data: file.split(',')[1], mimeType: 'image/png' } };
+    }
+    const reader = new FileReader();
+    const base64 = await new Promise<string>((resolve) => {
+      reader.onload = () => resolve((reader.result as string).split(',')[1]);
+      reader.readAsDataURL(file as File);
+    });
+    return { inlineData: { data: base64, mimeType: (file as File).type } };
+  };
+
+  const sourcePart = await fileToPart(imageFile);
+  const refParts = await Promise.all(referenceFiles.map(f => fileToPart(f)));
+
+  const response = await ai.models.generateContent({
+    model: 'gemini-2.5-flash-image',
+    contents: {
+      parts: [
+        sourcePart,
+        ...refParts,
+        { text: prompt }
+      ]
+    }
+  });
+
+  const imagePart = response.candidates?.[0]?.content?.parts.find(p => p.inlineData);
+  if (imagePart?.inlineData) {
+    return `data:image/png;base64,${imagePart.inlineData.data}`;
   }
-  return { buffer, ctx };
+  
+  throw new Error("Retouch protocol failed: No enhanced image returned.");
+};
+
+/**
+ * Interactive chat with Google Search grounding
+ */
+export const chatWithGeminiStream = async (message: string, history: any[], onChunk: (text: string) => void) => {
+  const ai = getAI();
+  const chat = ai.chats.create({
+    model: 'gemini-3-pro-preview',
+    config: { 
+      tools: [{ googleSearch: {} }],
+      systemInstruction: "You are the Intelligence Core of the Neural Hub. You provide technical, accurate, and concise insights. Use Google Search for the latest AI trends."
+    }
+  });
+
+  const stream = await chat.sendMessageStream({ message });
+  
+  let groundingLinks: {uri: string, title: string}[] = [];
+
+  for await (const chunk of stream) {
+    const text = chunk.text || '';
+    onChunk(text);
+    
+    const chunks = chunk.candidates?.[0]?.groundingMetadata?.groundingChunks;
+    if (chunks) {
+        chunks.forEach((c: any) => {
+            if (c.web?.uri) {
+                groundingLinks.push({ uri: c.web.uri, title: c.web.title || 'Source' });
+            }
+        });
+    }
+  }
+  return groundingLinks;
 };

@@ -1,3 +1,4 @@
+
 import React, { useState, useCallback, useRef } from 'react';
 import { UploadIcon, AudioIcon, XIcon, CopyIcon, CheckCircleIcon, InfoIcon, LoaderIcon, RefreshIcon, BoxIcon, XCircleIcon } from './Icons';
 import { analyzeAudioWithLLM, reformatLyricsWithAI } from '../services/llmService';
@@ -81,10 +82,12 @@ const AudioMetadataViewer: React.FC<AudioMetadataViewerProps> = ({ activeModel, 
             audioRef.current.currentTime = 0;
         }
 
+        // Fix: Added missing 'description' property required by SoundStudioState
         onImportToStudio({
             ...analysis,
             isInstrumental: (analysis.lyrics || '').length < 5,
-            vocalStyle: 'Natural'
+            vocalStyle: 'Natural',
+            description: ''
         });
     };
 
@@ -224,7 +227,6 @@ const AudioMetadataViewer: React.FC<AudioMetadataViewerProps> = ({ activeModel, 
                                             Normalize
                                         </button>
                                         <button 
-                                            // Fix: Convert renderSafe result to string as copyText expects a string
                                             onClick={() => copyText(String(renderSafe(analysis.lyrics)), 'l')} 
                                             className="text-gray-500 hover:text-white transition-colors"
                                         >

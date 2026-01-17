@@ -1,9 +1,8 @@
 {
-  "name": "Multimodal AI Intelligence Hub",
-  "description": "Professional-grade multimodal tool for analyzing AI models, generating high-fidelity images, and producing studio-grade audio. Featuring native support for Pony, Illustrious, and Z-Image model families.",
+  "name": "AI HUB",
+  "description": "The ultimate professional-grade multimodal cockpit for AI asset auditing, image synthesis, and real-time neural logic control.",
   "requestFramePermissions": [
     "camera",
-    "microphone",
-    "display-capture"
+    "microphone"
   ]
 }
