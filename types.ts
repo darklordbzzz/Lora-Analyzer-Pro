@@ -92,7 +92,6 @@ export interface ImageAnalysisResult {
   colorGamma: string;
   poseDescriptor: string;
   suggestedArtists: string[];
-  // New detailed audit fields
   actionPoseIdentifier?: string;
   appearanceRegistry?: {
     attire: string;
@@ -106,6 +105,8 @@ export interface AnalyzerTuningConfig {
   keywords: string;
   deepPoseAudit: boolean;
   appearanceAudit: boolean;
+  artisticStylePreference: string;
+  colorFilterPreference: string;
   adjustments: {
     colorTemperature: number; // -100 to 100
     lightingIntensity: number;

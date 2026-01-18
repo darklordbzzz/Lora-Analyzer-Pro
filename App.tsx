@@ -1,6 +1,6 @@
 
 import React, { useState, useCallback, useMemo } from 'react';
-import { AppView, ImageSubView, LoraFileWithPreview, LoraAnalysis, AnalysisStatus, LLMModel } from './types';
+import { AppView, ImageSubView, LoraFileWithPreview, LoraAnalysis, AnalysisStatus, LLMModel, AnalyzerTuningConfig } from './types';
 import * as gemini from './services/geminiService';
 import Header from './components/Header';
 import FileUpload from './components/FileUpload';
@@ -23,12 +23,33 @@ const DEFAULT_MODEL: LLMModel = {
   modelName: 'gemini-3-flash-preview'
 };
 
+const DEFAULT_TUNING: AnalyzerTuningConfig = {
+  keywords: '',
+  deepPoseAudit: true,
+  appearanceAudit: true,
+  artisticStylePreference: 'Photo',
+  colorFilterPreference: 'None',
+  adjustments: {
+    colorTemperature: 0,
+    lightingIntensity: 100,
+    weatherCondition: 'Sunny',
+    poseRigidity: 50,
+    styleWeight: 100
+  }
+};
+
 const App: React.FC = () => {
-  const [currentView, setCurrentView] = useState<AppView>('models');
-  const [imageSubView, setImageSubView] = useState<ImageSubView>('studio');
+  const [currentView, setCurrentView] = useState<AppView>('images');
+  const [imageSubView, setImageSubView] = useState<ImageSubView>('analyzer');
   const [loraFiles, setLoraFiles] = useState<LoraFileWithPreview[]>([]);
   const [analysisResults, setAnalysisResults] = useState<LoraAnalysis[]>([]);
   const [activeModel, setActiveModel] = useState<LLMModel>(DEFAULT_MODEL);
+  
+  // Persistent tuning state for ImageAnalyzer
+  const [analyzerTuning, setAnalyzerTuning] = useState<AnalyzerTuningConfig>(DEFAULT_TUNING);
+  const [analyzerToggles, setAnalyzerToggles] = useState<Record<string, boolean>>({
+    comp: true, style: true, light: true, tech: true, colors: true, pose: true, action: true, appearance: true, preview: true, artists: true
+  });
 
   const analyzeFile = useCallback(async (fileId: string) => {
     const file = loraFiles.find(f => f.id === fileId);
@@ -72,8 +93,8 @@ const App: React.FC = () => {
       <div className="flex flex-col gap-6 max-w-7xl mx-auto">
         <div className="flex items-center gap-2 bg-black/40 p-1 rounded-2xl border border-white/5 self-start mb-2 glass overflow-x-auto max-w-full">
           {[
-            { id: 'studio', label: 'Image Studio', icon: SparklesIcon },
             { id: 'analyzer', label: 'Vision Auditor', icon: SearchIcon },
+            { id: 'studio', label: 'Image Studio', icon: SparklesIcon },
             { id: 'inpaint', label: 'Local Inpaint', icon: TargetIcon },
             { id: 'retouch', label: 'Neural Retouch', icon: EditIcon },
           ].map((sub) => (
@@ -91,8 +112,16 @@ const App: React.FC = () => {
         </div>
         
         <div className="animate-slide-up">
+          {imageSubView === 'analyzer' && (
+            <ImageAnalyzer 
+              activeModel={activeModel} 
+              tuning={analyzerTuning}
+              setTuning={setAnalyzerTuning}
+              toggles={analyzerToggles}
+              setToggles={setAnalyzerToggles}
+            />
+          )}
           {imageSubView === 'studio' && <ImageStudio />}
-          {imageSubView === 'analyzer' && <ImageAnalyzer activeModel={activeModel} />}
           {imageSubView === 'retouch' && <PhotoRetouch activeModel={activeModel} />}
           {imageSubView === 'inpaint' && <InpaintStudio activeModel={activeModel} />}
         </div>
@@ -155,10 +184,10 @@ const App: React.FC = () => {
 
   const renderCurrentView = () => {
     switch (currentView) {
-      case 'models':
-        return renderDashboard();
       case 'images':
         return renderImageModule();
+      case 'models':
+        return renderDashboard();
       case 'video':
         return <VideoMetadataViewer activeModel={activeModel} />;
       case 'audio':
@@ -186,14 +215,14 @@ const App: React.FC = () => {
         <div className="container mx-auto px-6 flex flex-col md:flex-row items-center justify-between gap-8">
           <div className="flex items-center gap-8 opacity-40 grayscale hover:grayscale-0 transition-all duration-700">
             <div className="flex items-center gap-4">
-              <p className="text-[10px] font-black text-gray-400 uppercase tracking-[0.4em]">Hub Status</p>
+              <p className="text-gray-400 font-black text-[10px] uppercase tracking-[0.4em]">Hub Status</p>
               <div className="status-dot"></div>
             </div>
             <div className="w-px h-4 bg-white/10"></div>
-            <p className="text-[10px] font-black text-gray-400 uppercase tracking-[0.4em]">Optimized AI HUB Pipeline 4.0</p>
+            <p className="text-gray-400 font-black text-[10px] uppercase tracking-[0.4em]">Optimized AI HUB Pipeline 4.0</p>
           </div>
           
-          <div className="text-[10px] font-bold text-gray-600 uppercase tracking-[0.2em]">
+          <div className="text-gray-600 font-bold text-[10px] uppercase tracking-[0.2em]">
             &copy; 2025 AI HUB PRO • Powered by Gemini 3 & Veo 3.1
           </div>
         </div>

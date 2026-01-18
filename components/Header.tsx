@@ -10,8 +10,8 @@ interface HeaderProps {
 
 const Header: React.FC<HeaderProps> = ({ currentView, onViewChange }) => {
   const navItems: { view: AppView; icon: any; label: string }[] = [
-    { view: 'models', icon: BoxIcon, label: 'Asset Matrix' },
     { view: 'images', icon: ImageIcon, label: 'Vision' },
+    { view: 'models', icon: BoxIcon, label: 'Asset Matrix' },
     { view: 'video', icon: VideoIcon, label: 'Temporal' },
     { view: 'audio', icon: AudioIcon, label: 'Acoustic' },
     { view: 'chat', icon: ChatIcon, label: 'Intelligence' },
@@ -21,7 +21,7 @@ const Header: React.FC<HeaderProps> = ({ currentView, onViewChange }) => {
   return (
     <header className="glass sticky top-0 z-50 border-b border-white/5">
       <div className="container mx-auto px-6 py-4 flex flex-col md:flex-row items-center justify-between gap-6">
-        <div className="flex items-center gap-4 group cursor-pointer" onClick={() => onViewChange('models')}>
+        <div className="flex items-center gap-4 group cursor-pointer" onClick={() => onViewChange('images')}>
           <div className="p-3 bg-hub-accent/10 rounded-2xl border border-hub-accent/20 group-hover:glow-accent transition-all duration-500">
             <SparklesIcon className="h-6 w-6 text-hub-accent" />
           </div>

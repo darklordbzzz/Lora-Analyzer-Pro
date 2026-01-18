@@ -31,6 +31,12 @@ export const analyzeImageWithLLM = async (
       if (tuning.keywords) {
         instructions += `\nINCORPORATE THESE KEYWORDS/CONTEXT: ${tuning.keywords}. Ensure the final description aligns with these themes.`;
       }
+      if (tuning.artisticStylePreference && tuning.artisticStylePreference !== 'None') {
+        instructions += `\nARTISTIC STYLE PREFERENCE: Analyze and describe the image leaning towards a '${tuning.artisticStylePreference}' aesthetic if plausible.`;
+      }
+      if (tuning.colorFilterPreference && tuning.colorFilterPreference !== 'None') {
+        instructions += `\nCOLOR GRADE PREFERENCE: Apply a '${tuning.colorFilterPreference}' filter analysis to your description.`;
+      }
       if (tuning.deepPoseAudit) {
         instructions += `\nDEEP POSE AUDIT: Provide an additional 'actionPoseIdentifier' field describing the exact kinetic state, limb angles, and physical exertion of the subject.`;
       }
@@ -46,7 +52,7 @@ export const analyzeImageWithLLM = async (
       - Pose Rigidity: ${adj.poseRigidity}%
       - Style Influence Weight: ${adj.styleWeight}%
       
-      Finally, provide a 'tunedPromptPreview' field which is a single, high-fidelity prompt for an image generator (like SDXL or Midjourney) that represents this image but with all the tuning adjustments applied.`;
+      Finally, provide a 'tunedPromptPreview' field which is a single, high-fidelity prompt for an image generator (like SDXL or Midjourney) that represents this image but with all the tuning adjustments applied. Incorporate the artistic style ('${tuning.artisticStylePreference}') and color filter ('${tuning.colorFilterPreference}') into this prompt.`;
     }
 
     const res = await vlm.executeVLMAction(model, instructions, {

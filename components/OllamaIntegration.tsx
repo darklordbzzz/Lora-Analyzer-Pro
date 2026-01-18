@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { 
     ServerIcon, LoaderIcon, CheckCircleIcon, RefreshIcon, 
@@ -23,6 +22,7 @@ const formatBytes = (bytes: number, decimals = 2) => {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(decimals)) + ' ' + sizes[i];
 };
 
+// Fix: Completed truncated component and added default export
 const OllamaIntegration: React.FC<OllamaIntegrationProps> = ({ onSyncModels, currentModels, onActivateModel, activeModelId }) => {
     const [baseUrl, setBaseUrl] = useState('http://127.0.0.1:11434');
     const [isConnected, setIsConnected] = useState(false);
@@ -168,4 +168,94 @@ const OllamaIntegration: React.FC<OllamaIntegrationProps> = ({ onSyncModels, cur
                                     onChange={e => setPullModelName(e.target.value)}
                                     onKeyDown={e => e.key === 'Enter' && handlePull()}
                                     placeholder="Enter model name (e.g. llama3.2, mistral)"
-                                    className="flex-grow px-4 py-3 bg-gray-900 border border-gray-800 rounded-xl text-
+                                    className="flex-grow px-4 py-3 bg-gray-900 border border-gray-800 rounded-xl text-gray-200 text-xs outline-none focus:border-indigo-500 transition-all"
+                                />
+                                <button 
+                                    onClick={handlePull}
+                                    disabled={isPulling || !pullModelName}
+                                    className="px-8 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-black uppercase text-[10px] tracking-widest rounded-xl transition-all shadow-lg active:scale-95 disabled:opacity-30"
+                                >
+                                    {isPulling ? <LoaderIcon className="h-4 w-4 animate-spin" /> : <PlusIcon className="h-4 w-4" />}
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* TERMINAL EMULATOR */}
+                        <div className="flex-grow bg-black rounded-2xl border border-gray-800 p-4 flex flex-col gap-2 overflow-hidden">
+                            <div className="flex items-center justify-between border-b border-white/5 pb-2">
+                                <div className="flex items-center gap-2">
+                                    <TerminalIcon className="h-3 w-3 text-emerald-500" />
+                                    <span className="text-[9px] font-black text-emerald-500/60 uppercase tracking-widest">Inference Protocol Log</span>
+                                </div>
+                                {isPulling && (
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-24 h-1.5 bg-gray-900 rounded-full overflow-hidden">
+                                            <div className="h-full bg-indigo-500" style={{ width: `${pullPercent}%` }} />
+                                        </div>
+                                        <span className="text-[9px] font-black text-indigo-400">{pullPercent}%</span>
+                                    </div>
+                                )}
+                            </div>
+                            <div className="flex-grow overflow-y-auto font-mono text-[9px] text-emerald-500/80 space-y-1 custom-scrollbar">
+                                {terminalLogs.length === 0 ? (
+                                    <div className="opacity-20 italic">Awaiting protocol initiation...</div>
+                                ) : (
+                                    terminalLogs.map((log, i) => <div key={i}>{log}</div>)
+                                )}
+                                <div ref={consoleEndRef} />
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* REGISTRY LIST */}
+                <div className="lg:col-span-5 flex flex-col gap-4">
+                    <div className="flex-grow bg-gray-900/40 border border-gray-800 rounded-3xl p-6 flex flex-col gap-4 overflow-hidden shadow-2xl">
+                        <h4 className="text-[10px] font-black text-gray-500 uppercase tracking-[0.3em] px-2">Registry Nodes</h4>
+                        <div className="flex-grow overflow-y-auto custom-scrollbar space-y-2 pr-2">
+                            {installedModels.length === 0 ? (
+                                <div className="h-full flex flex-col items-center justify-center opacity-20 gap-4">
+                                    <BoxIcon className="h-12 w-12" />
+                                    <p className="text-[10px] font-black uppercase tracking-widest">No local nodes found</p>
+                                </div>
+                            ) : (
+                                installedModels.map(model => (
+                                    <div 
+                                        key={model.digest} 
+                                        onClick={() => handleSelectModel(model)}
+                                        className={`w-full p-4 rounded-2xl border transition-all text-left flex items-center justify-between group cursor-pointer ${activeModelId === `ollama-${model.name}` ? 'bg-indigo-600/10 border-indigo-500/40 shadow-lg' : 'bg-gray-950/40 border-gray-800 hover:border-gray-700'}`}
+                                    >
+                                        <div className="flex items-center gap-4">
+                                            <div className={`p-2 rounded-lg ${activeModelId === `ollama-${model.name}` ? 'bg-indigo-600 text-white' : 'bg-gray-900 text-gray-600 group-hover:text-gray-400'}`}>
+                                                <BoxIcon className="h-4 w-4" />
+                                            </div>
+                                            <div className="min-w-0">
+                                                <span className="text-xs font-black text-white block truncate uppercase tracking-tight">{model.name}</span>
+                                                <div className="flex items-center gap-2 mt-1">
+                                                    <span className="text-[8px] font-bold text-gray-500 uppercase tracking-widest">{formatBytes(model.size)}</span>
+                                                    <div className="w-1 h-1 rounded-full bg-gray-700" />
+                                                    <span className="text-[8px] font-mono text-indigo-400/60 uppercase">{model.details.parameter_size}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            {activeModelId === `ollama-${model.name}` && <CheckCircleIcon className="h-4 w-4 text-indigo-400" />}
+                                            <button 
+                                                onClick={(e) => handleDelete(model.name, e)}
+                                                className="p-2 text-gray-700 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all"
+                                            >
+                                                <TrashIcon className="h-4 w-4" />
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+export default OllamaIntegration;
