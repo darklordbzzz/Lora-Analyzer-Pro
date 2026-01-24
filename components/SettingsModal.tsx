@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import type { CustomIntegration, LLMModel, LLMProvider, CustomHeader, AudioEngineNode } from '../types';
 import { XIcon, SettingsIcon, TrashIcon, ServerIcon, FolderIcon, BoxIcon, AudioIcon, CheckCircleIcon, CloudIcon, PlusIcon, EditIcon, LinkIcon, CodeBracketIcon, InfoIcon, TerminalIcon, GlobeIcon, LoaderIcon, RefreshIcon, XCircleIcon, PlugIcon, ChevronDownIcon } from './Icons';
@@ -15,8 +14,6 @@ interface SettingsModalProps {
   onSaveModels: (models: LLMModel[]) => void;
   autoSave: boolean;
   onToggleAutoSave: (value: boolean) => void;
-  enableLocalModels?: boolean;
-  onToggleLocalModels?: (value: boolean) => void;
 }
 
 const SettingsModal: React.FC<SettingsModalProps> = ({ 
@@ -197,7 +194,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                 
                 {activeTab === 'core' && (
                     <div className="animate-in fade-in slide-in-from-bottom-4 duration-700 h-full">
-                        {/* Fix: Removed activeModelId and onAddModel as they are not defined in NeuralEngineSetupProps */}
                         <NeuralEngineSetup 
                           onActivateEngine={handleActivateEngine} 
                           allModels={models}

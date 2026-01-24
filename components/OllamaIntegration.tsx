@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { 
     ServerIcon, LoaderIcon, CheckCircleIcon, RefreshIcon, 
@@ -22,7 +23,6 @@ const formatBytes = (bytes: number, decimals = 2) => {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(decimals)) + ' ' + sizes[i];
 };
 
-// Fix: Completed truncated component and added default export
 const OllamaIntegration: React.FC<OllamaIntegrationProps> = ({ onSyncModels, currentModels, onActivateModel, activeModelId }) => {
     const [baseUrl, setBaseUrl] = useState('http://127.0.0.1:11434');
     const [isConnected, setIsConnected] = useState(false);
@@ -52,7 +52,7 @@ const OllamaIntegration: React.FC<OllamaIntegrationProps> = ({ onSyncModels, cur
             const connected = await checkOllamaConnection(baseUrl);
             setIsConnected(connected);
             if (connected) await fetchModels();
-            else setError("Local node not responding. Ensure Ollama is running.");
+            else setError("Local node not responding. Ensure Ollama is running with OLLAMA_ORIGINS=\"*\".");
         } catch (e) {
             setError("Connection protocol failure.");
         } finally {
@@ -64,12 +64,12 @@ const OllamaIntegration: React.FC<OllamaIntegrationProps> = ({ onSyncModels, cur
         try {
             const response = await getInstalledModels(baseUrl);
             const modelsRaw = response.models || [];
-            const models = modelsRaw.sort((a, b) => new Date(b.modified_at).getTime() - new Date(a.modified_at).getTime());
-            setInstalledModels(models);
+            const sortedModels = modelsRaw.sort((a, b) => new Date(b.modified_at).getTime() - new Date(a.modified_at).getTime());
+            setInstalledModels(sortedModels);
             
             // Auto-sync with parent application
             const nonOllamaModels = currentModels.filter(m => m.provider !== 'ollama');
-            const newOllamaModels: LLMModel[] = models.map(m => ({
+            const newOllamaModels: LLMModel[] = sortedModels.map(m => ({
                 id: `ollama-${m.name}`,
                 name: m.name, 
                 provider: 'ollama',
@@ -152,14 +152,13 @@ const OllamaIntegration: React.FC<OllamaIntegrationProps> = ({ onSyncModels, cur
                 </button>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 min-h-[450px]">
-                {/* INTAKE & TERMINAL */}
-                <div className="lg:col-span-7 flex flex-col gap-4 h-full">
-                    <div className="flex-grow bg-gray-950 border border-gray-800 rounded-3xl p-6 flex flex-col gap-6 shadow-2xl relative overflow-hidden">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 flex-grow">
+                <div className="lg:col-span-7 flex flex-col gap-4">
+                    <div className="bg-gray-950 border border-gray-800 rounded-3xl p-6 flex flex-col gap-6 shadow-2xl relative overflow-hidden h-full">
                         <div className="space-y-4">
                             <div className="flex items-center gap-3 text-indigo-400">
                                 <DownloadIcon className="h-5 w-5" />
-                                <span className="text-[10px] font-black uppercase tracking-widest">Model Library Intake</span>
+                                <span className="text-[10px] font-black uppercase tracking-widest">Model Intake</span>
                             </div>
                             <div className="flex gap-3">
                                 <input 
@@ -167,7 +166,7 @@ const OllamaIntegration: React.FC<OllamaIntegrationProps> = ({ onSyncModels, cur
                                     value={pullModelName}
                                     onChange={e => setPullModelName(e.target.value)}
                                     onKeyDown={e => e.key === 'Enter' && handlePull()}
-                                    placeholder="Enter model name (e.g. llama3.2, mistral)"
+                                    placeholder="e.g. llama3.2, mistral, qwen2"
                                     className="flex-grow px-4 py-3 bg-gray-900 border border-gray-800 rounded-xl text-gray-200 text-xs outline-none focus:border-indigo-500 transition-all"
                                 />
                                 <button 
@@ -180,8 +179,7 @@ const OllamaIntegration: React.FC<OllamaIntegrationProps> = ({ onSyncModels, cur
                             </div>
                         </div>
 
-                        {/* TERMINAL EMULATOR */}
-                        <div className="flex-grow bg-black rounded-2xl border border-gray-800 p-4 flex flex-col gap-2 overflow-hidden">
+                        <div className="flex-grow bg-black rounded-2xl border border-gray-800 p-4 flex flex-col gap-2 overflow-hidden min-h-[200px]">
                             <div className="flex items-center justify-between border-b border-white/5 pb-2">
                                 <div className="flex items-center gap-2">
                                     <TerminalIcon className="h-3 w-3 text-emerald-500" />
@@ -208,8 +206,7 @@ const OllamaIntegration: React.FC<OllamaIntegrationProps> = ({ onSyncModels, cur
                     </div>
                 </div>
 
-                {/* REGISTRY LIST */}
-                <div className="lg:col-span-5 flex flex-col gap-4">
+                <div className="lg:col-span-5 flex flex-col gap-4 h-full">
                     <div className="flex-grow bg-gray-900/40 border border-gray-800 rounded-3xl p-6 flex flex-col gap-4 overflow-hidden shadow-2xl">
                         <h4 className="text-[10px] font-black text-gray-500 uppercase tracking-[0.3em] px-2">Registry Nodes</h4>
                         <div className="flex-grow overflow-y-auto custom-scrollbar space-y-2 pr-2">
@@ -254,6 +251,12 @@ const OllamaIntegration: React.FC<OllamaIntegrationProps> = ({ onSyncModels, cur
                     </div>
                 </div>
             </div>
+            {error && (
+                <div className="p-4 bg-red-950/20 border border-red-500/30 rounded-2xl flex items-center gap-3">
+                    <XCircleIcon className="h-5 w-5 text-red-500" />
+                    <p className="text-[10px] text-red-200 font-mono">{error}</p>
+                </div>
+            )}
         </div>
     );
 };

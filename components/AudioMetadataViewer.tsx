@@ -1,6 +1,5 @@
-
 import React, { useState, useCallback, useRef } from 'react';
-import { UploadIcon, AudioIcon, XIcon, CopyIcon, CheckCircleIcon, InfoIcon, LoaderIcon, RefreshIcon, BoxIcon, XCircleIcon } from './Icons';
+import { LoaderIcon, AudioIcon, XIcon, CopyIcon, CheckCircleIcon, RefreshIcon, BoxIcon, XCircleIcon } from './Icons';
 import { analyzeAudioWithLLM, reformatLyricsWithAI } from '../services/llmService';
 import { AudioAnalysisResult, SoundStudioState, LLMModel } from '../types';
 
@@ -20,7 +19,6 @@ const AudioMetadataViewer: React.FC<AudioMetadataViewerProps> = ({ activeModel, 
     const [copied, setCopied] = useState<string | null>(null);
     const audioRef = useRef<HTMLAudioElement>(null);
 
-    // Safeguard against React Error #31
     const renderSafe = (val: any) => {
         if (typeof val === 'string' || typeof val === 'number') return val;
         if (!val) return '';
@@ -82,17 +80,16 @@ const AudioMetadataViewer: React.FC<AudioMetadataViewerProps> = ({ activeModel, 
             audioRef.current.currentTime = 0;
         }
 
-        // Fix: Added missing 'description' property required by SoundStudioState
         onImportToStudio({
             ...analysis,
             isInstrumental: (analysis.lyrics || '').length < 5,
             vocalStyle: 'Natural',
-            description: ''
+            description: `Acoustic analysis export for ${analysis.title} by ${analysis.artist}. BPM: ${analysis.bpm}. Protocol: Reconstructive.`
         });
     };
 
     return (
-        <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-8 h-[calc(100vh-140px)]">
+        <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-8 h-[calc(100vh-140px)] animate-in fade-in duration-500">
             <div 
                 className={`border-2 border-dashed rounded-[2.5rem] flex flex-col items-center justify-center bg-gray-800/30 transition-all ${isDragging ? 'border-indigo-500 bg-indigo-900/10' : 'border-gray-700'} ${!audio ? 'cursor-pointer hover:bg-gray-800/50' : ''}`}
                 onDrop={(e) => { e.preventDefault(); setIsDragging(false); if (e.dataTransfer.files?.[0]) handleFile(e.dataTransfer.files[0]); }}
@@ -107,9 +104,6 @@ const AudioMetadataViewer: React.FC<AudioMetadataViewerProps> = ({ activeModel, 
                                 <div className="absolute inset-0 bg-indigo-500/10 animate-pulse"></div>
                             )}
                             <AudioIcon className={`h-32 w-32 transition-all duration-700 ${analysisPhase === 'scanning' ? 'text-indigo-400 scale-110' : analysisPhase === 'inferring' ? 'text-emerald-400 scale-95 animate-pulse' : 'text-indigo-400 opacity-60'}`} />
-                            {analysisPhase === 'scanning' && (
-                                <div className="absolute inset-0 border-4 border-indigo-500/30 rounded-[3rem] animate-[ping_3s_infinite]"></div>
-                            )}
                         </div>
                         <div className="text-center space-y-2">
                             <h3 className="font-black text-white truncate max-w-sm uppercase tracking-tight text-xl">{renderSafe(audio.file.name)}</h3>
@@ -128,7 +122,7 @@ const AudioMetadataViewer: React.FC<AudioMetadataViewerProps> = ({ activeModel, 
                         </div>
                         <div className="space-y-2">
                             <h3 className="text-2xl font-black text-gray-200 uppercase tracking-widest">Mount Audio Master</h3>
-                            <p className="text-gray-500 text-[10px] font-black uppercase tracking-[0.3em]">WAV / MP3 / STUDIO FLAC</p>
+                            <p className="text-gray-500 text-xs font-black uppercase tracking-[0.3em]">WAV / MP3 / STUDIO FLAC</p>
                         </div>
                     </div>
                 )}
@@ -140,12 +134,6 @@ const AudioMetadataViewer: React.FC<AudioMetadataViewerProps> = ({ activeModel, 
                         <h2 className="font-black text-xl flex items-center gap-3 uppercase tracking-tighter text-white">
                             <AudioIcon className="h-6 w-6 text-indigo-400" /> Acoustic DNA
                         </h2>
-                        {isAnalyzing && (
-                            <span className="text-[9px] font-black text-indigo-400 uppercase tracking-widest mt-1 flex items-center gap-2">
-                                <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse"></div>
-                                {analysisPhase === 'scanning' ? 'Local Spectral Mapping...' : 'Kernel Interpretation...'}
-                            </span>
-                        )}
                     </div>
                     <div className="flex gap-3">
                          {analysis && (
@@ -157,14 +145,14 @@ const AudioMetadataViewer: React.FC<AudioMetadataViewerProps> = ({ activeModel, 
                         {audio && (
                             <button onClick={handleAnalyze} disabled={isAnalyzing} className="px-5 py-2.5 bg-gray-700 hover:bg-indigo-600 text-white text-[10px] font-black uppercase rounded-xl shadow-xl disabled:opacity-50 transition-all flex items-center gap-2 border border-white/5">
                                 {isAnalyzing ? <LoaderIcon className="h-4 w-4 animate-spin" /> : <RefreshIcon className="h-4 w-4" />}
-                                {isAnalyzing ? 'Kernel Active' : 'Initiate Audit'}
+                                Initiate Audit
                             </button>
                         )}
                     </div>
                 </div>
-                <div className="flex-grow overflow-auto custom-scrollbar p-0">
+                <div className="flex-grow overflow-auto custom-scrollbar">
                     {error && (
-                        <div className="p-8 bg-red-950/20 border-b border-red-500/20 text-red-300 text-xs font-mono animate-in slide-in-from-top-4">
+                        <div className="p-8 bg-red-950/20 border-b border-red-500/20 text-red-300 text-sm font-mono animate-in slide-in-from-top-4">
                              <div className="flex items-center gap-2 mb-3">
                                 <XCircleIcon className="h-5 w-5 text-red-500" />
                                 <span className="font-black uppercase text-red-500 tracking-widest">Protocol Fault</span>
@@ -175,44 +163,40 @@ const AudioMetadataViewer: React.FC<AudioMetadataViewerProps> = ({ activeModel, 
                     {analysis ? (
                         <div className="animate-in fade-in duration-700 divide-y divide-gray-800/30 pb-12">
                             <div className="p-8 grid grid-cols-2 gap-6 bg-gray-950/20">
-                                <div className="bg-gray-900/60 p-5 rounded-2xl border border-gray-800 shadow-inner group">
-                                    <span className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.2em] block mb-2 opacity-50 group-hover:opacity-100 transition-opacity">Track Identity</span>
-                                    <p className="text-sm font-black text-white uppercase truncate tracking-tight">{renderSafe(analysis.title)}</p>
+                                <div className="bg-gray-900/60 p-5 rounded-2xl border border-gray-800 shadow-inner">
+                                    <span className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.2em] block mb-2 opacity-50">Track Identity</span>
+                                    <p className="text-base font-black text-white uppercase truncate tracking-tight">{renderSafe(analysis.title)}</p>
                                 </div>
-                                <div className="bg-gray-900/60 p-5 rounded-2xl border border-gray-800 shadow-inner group">
-                                    <span className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.2em] block mb-2 opacity-50 group-hover:opacity-100 transition-opacity">Primary Artist</span>
-                                    <p className="text-sm font-black text-white uppercase truncate tracking-tight">{renderSafe(analysis.artist)}</p>
+                                <div className="bg-gray-900/60 p-5 rounded-2xl border border-gray-800 shadow-inner">
+                                    <span className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.2em] block mb-2 opacity-50">Primary Artist</span>
+                                    <p className="text-base font-black text-white uppercase truncate tracking-tight">{renderSafe(analysis.artist)}</p>
                                 </div>
                             </div>
 
                             <div className="p-8 grid grid-cols-3 gap-6">
-                                <div className="text-center group">
-                                    <span className="text-[9px] font-black text-gray-500 uppercase tracking-widest block mb-1 group-hover:text-indigo-400 transition-colors">BPM</span>
+                                <div className="text-center">
+                                    <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest block mb-1">BPM</span>
                                     <p className="text-2xl font-black text-white font-mono">{renderSafe(analysis.bpm)}</p>
                                 </div>
-                                <div className="text-center group">
-                                    <span className="text-[9px] font-black text-gray-500 uppercase tracking-widest block mb-1 group-hover:text-indigo-400 transition-colors">Key</span>
+                                <div className="text-center">
+                                    <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest block mb-1">Key</span>
                                     <p className="text-2xl font-black text-white font-mono">{renderSafe(analysis.key)}</p>
                                 </div>
-                                <div className="text-center group">
-                                    <span className="text-[9px] font-black text-gray-500 uppercase tracking-widest block mb-1 group-hover:text-indigo-400 transition-colors">Mood</span>
-                                    <p className="text-sm font-black text-white uppercase truncate pt-2">{renderSafe(analysis.mood)}</p>
+                                <div className="text-center">
+                                    <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest block mb-1">Mood</span>
+                                    <p className="text-sm font-black text-white uppercase pt-2">{renderSafe(analysis.mood)}</p>
                                 </div>
                             </div>
                             
                             <div className="p-8">
                                 <div className="flex justify-between items-center mb-6">
-                                    <span className="text-[10px] font-black text-gray-500 uppercase tracking-[0.3em]">Acoustic Instrumentation</span>
-                                    <button onClick={() => copyText((analysis.instrumentation || []).join(', '), 'all-inst')} className="text-[9px] font-black text-indigo-400 uppercase flex items-center gap-1.5 hover:text-indigo-300 transition-all bg-indigo-600/10 px-3 py-1.5 rounded-lg border border-indigo-500/20">
-                                        {copied === 'all-inst' ? <CheckCircleIcon className="h-3 w-3" /> : <CopyIcon className="h-3 w-3" />}
-                                        {copied === 'all-inst' ? 'Copied' : 'Copy CSV'}
-                                    </button>
+                                    <span className="text-[11px] font-black text-gray-500 uppercase tracking-[0.3em]">Instrumentation</span>
                                 </div>
                                 <div className="flex flex-wrap gap-2">
                                     {(analysis.instrumentation || []).map((inst, i) => (
-                                        <button key={i} onClick={() => copyText(String(inst), `i-${i}`)} className="px-4 py-2 bg-indigo-950/20 text-indigo-300 text-[10px] font-black uppercase rounded-xl border border-indigo-500/10 flex items-center gap-2 hover:bg-indigo-600 hover:text-white transition-all shadow-md">
+                                        <button key={i} onClick={() => copyText(String(inst), `i-${i}`)} className="px-4 py-2 bg-indigo-950/20 text-indigo-300 text-[11px] font-black uppercase rounded-xl border border-indigo-500/10 flex items-center gap-2 hover:bg-indigo-600 hover:text-white transition-all shadow-md">
                                             {renderSafe(inst)}
-                                            {copied === `i-${i}` ? <CheckCircleIcon className="h-2.5 w-2.5" /> : <CopyIcon className="h-2.5 w-2.5 opacity-30" />}
+                                            {copied === `i-${i}` ? <CheckCircleIcon className="h-3 w-3" /> : <CopyIcon className="h-3 w-3 opacity-30" />}
                                         </button>
                                     ))}
                                 </div>
@@ -220,34 +204,23 @@ const AudioMetadataViewer: React.FC<AudioMetadataViewerProps> = ({ activeModel, 
 
                             <div>
                                 <div className="px-8 py-5 bg-gray-900/40 border-b border-gray-800 flex justify-between items-center backdrop-blur-md sticky top-[-1px] z-10">
-                                    <span className="text-[10px] font-black text-green-400 uppercase tracking-[0.3em]">Lyric Structure</span>
+                                    <span className="text-[11px] font-black text-green-400 uppercase tracking-[0.3em]">Lyric Structure</span>
                                     <div className="flex gap-4">
-                                        <button onClick={handleReformat} disabled={isReformatting} className="text-[9px] font-black text-indigo-400 uppercase flex items-center gap-2 disabled:opacity-50 hover:text-indigo-300 transition-all">
-                                            {isReformatting ? <LoaderIcon className="animate-spin h-3 w-3" /> : <RefreshIcon className="h-3 w-3" />}
+                                        <button onClick={handleReformat} disabled={isReformatting} className="text-[11px] font-black text-indigo-400 uppercase flex items-center gap-2 disabled:opacity-50 hover:text-indigo-300 transition-all">
+                                            {isReformatting ? <LoaderIcon className="animate-spin h-3.5 w-3.5" /> : <RefreshIcon className="h-3.5 w-3.5" />}
                                             Normalize
-                                        </button>
-                                        <button 
-                                            onClick={() => copyText(String(renderSafe(analysis.lyrics)), 'l')} 
-                                            className="text-gray-500 hover:text-white transition-colors"
-                                        >
-                                            {copied === 'l' ? <CheckCircleIcon className="h-5 w-5 text-green-500" /> : <CopyIcon className="h-5 w-5" />}
                                         </button>
                                     </div>
                                 </div>
-                                <div className="p-8 text-sm font-mono whitespace-pre-wrap text-gray-400 leading-relaxed max-h-[500px] overflow-y-auto custom-scrollbar selection:bg-indigo-500/30 bg-black/10 shadow-inner">
-                                    {renderSafe(analysis.lyrics) || '// No lyrical content detected or provided.'}
+                                <div className="p-8 text-sm font-mono whitespace-pre-wrap text-gray-300 leading-relaxed bg-black/10 shadow-inner">
+                                    {renderSafe(analysis.lyrics) || '// No lyrical content detected.'}
                                 </div>
                             </div>
                         </div>
                     ) : (
-                        <div className="h-full flex flex-col items-center justify-center text-center p-12 space-y-6 opacity-40 grayscale">
-                             <div className="p-10 bg-gray-950 rounded-[3rem] border border-gray-800 shadow-2xl">
-                                <BoxIcon className="h-20 w-20 text-indigo-400 opacity-20" />
-                             </div>
-                             <div className="space-y-3">
-                                <h4 className="text-2xl font-black uppercase tracking-[0.3em] text-gray-500">Analytics Idle</h4>
-                                <p className="text-[10px] font-black uppercase tracking-widest max-w-xs mx-auto leading-relaxed text-gray-600">Mount a resource and initiate audit to reconstruct acoustic DNA segments.</p>
-                             </div>
+                        <div className="h-full flex flex-col items-center justify-center text-center p-12 space-y-6 opacity-40 grayscale py-40">
+                             <BoxIcon className="h-20 w-20 text-indigo-400 opacity-20" />
+                             <h4 className="text-2xl font-black uppercase tracking-[0.3em] text-gray-500">Analytics Idle</h4>
                         </div>
                     )}
                 </div>

@@ -1,8 +1,9 @@
 {
   "name": "AI HUB",
-  "description": "The ultimate professional-grade multimodal cockpit for AI asset auditing, image synthesis, and real-time neural logic control.",
+  "description": "Professional-grade multimodal neural workstation and asset manager.",
   "requestFramePermissions": [
     "camera",
-    "microphone"
+    "microphone",
+    "geolocation"
   ]
 }

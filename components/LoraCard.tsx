@@ -4,9 +4,8 @@ import type { LoraAnalysis, LLMModel } from '../types';
 import { AnalysisStatus } from '../types';
 import { 
     LoaderIcon, CheckCircleIcon, ChevronDownIcon, 
-    TrashIcon, BoxIcon, PlugIcon, TriggerWordsIcon, TrainingIcon, RequirementsIcon, TagsIcon, CopyIcon
+    TrashIcon, BoxIcon, PlugIcon, TriggerWordsIcon, TrainingIcon, RequirementsIcon, TagsIcon, CopyIcon, SparklesIcon
 } from './Icons';
-import { initializeIntegratedCore } from '../services/llmService';
 
 interface LoraCardProps {
   result: LoraAnalysis;
@@ -14,6 +13,8 @@ interface LoraCardProps {
   onRetry?: () => void;
   canRetry?: boolean;
   activeModel?: LLMModel;
+  isInjected?: boolean;
+  onToggleInjection?: () => void;
 }
 
 const DetailSection: React.FC<{ title: string; icon: React.ReactNode; children: React.ReactNode; isOpen: boolean; onToggle: () => void; count?: number }> = ({ title, icon, children, isOpen, onToggle, count }) => (
@@ -32,10 +33,8 @@ const DetailSection: React.FC<{ title: string; icon: React.ReactNode; children: 
     </div>
 );
 
-const LoraCard: React.FC<LoraCardProps> = ({ result, onDelete }) => {
+const LoraCard: React.FC<LoraCardProps> = ({ result, onDelete, isInjected, onToggleInjection }) => {
     const [openSection, setOpenSection] = useState<string | null>(null);
-    const [isIntegrating, setIsIntegrating] = useState(false);
-    const [intStatus, setIntStatus] = useState<'idle' | 'success' | 'error'>('idle');
 
     const renderValue = (val: any) => {
         if (val === null || val === undefined || val === '') return <span className="opacity-20 italic">VOID</span>;
@@ -44,24 +43,14 @@ const LoraCard: React.FC<LoraCardProps> = ({ result, onDelete }) => {
 
     const toggleSection = (section: string) => setOpenSection(prev => (prev === section ? null : section));
 
-    const handleIntegrate = async () => {
-        setIsIntegrating(true);
-        setIntStatus('idle');
-        try {
-            const mockFile = new File([""], result.fileName, { type: "application/octet-stream" });
-            const res = await initializeIntegratedCore(mockFile);
-            if (res.success) {
-                setIntStatus('success');
-            } else { setIntStatus('error'); }
-        } catch (e) { setIntStatus('error'); }
-        finally { setIsIntegrating(false); setTimeout(() => setIntStatus('idle'), 3000); }
-    };
-
-    const isGGUF = String(result.fileName || '').toLowerCase().endsWith('.gguf');
     const isPending = result.status === AnalysisStatus.PENDING;
 
     return (
-        <div className="glass-card rounded-[2.5rem] overflow-hidden flex flex-col transition-all hover:shadow-[0_20px_60px_rgba(0,0,0,0.5)] hover:border-hub-accent/40 group h-full relative">
+        <div className={`glass-card rounded-[2.5rem] overflow-hidden flex flex-col transition-all hover:shadow-[0_20px_60px_rgba(0,0,0,0.5)] group h-full relative border ${isInjected ? 'border-hub-accent shadow-[0_0_30px_rgba(99,102,241,0.2)]' : 'border-hub-border'}`}>
+            {isInjected && (
+                <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-hub-accent to-transparent animate-pulse z-20"></div>
+            )}
+
             <div className="h-56 bg-black flex items-center justify-center relative overflow-hidden">
                 {result.previewImageUrl ? (
                     <img src={result.previewImageUrl} alt={result.fileName} className="w-full h-full object-cover transition-transform group-hover:scale-110 duration-1000" />
@@ -75,6 +64,11 @@ const LoraCard: React.FC<LoraCardProps> = ({ result, onDelete }) => {
                 {isPending && <div className="scanning-line"></div>}
 
                 <div className="absolute top-4 right-4 flex gap-2">
+                    {isInjected && (
+                         <span className="text-[8px] font-black text-white uppercase bg-indigo-600 px-2 py-1 rounded-lg border border-white/20 backdrop-blur-md shadow-lg flex items-center gap-1.5">
+                            <SparklesIcon className="h-3 w-3 animate-spin" /> Mounted
+                        </span>
+                    )}
                     <span className="text-[9px] font-black text-white uppercase bg-hub-accent/80 px-3 py-1.5 rounded-xl border border-white/20 backdrop-blur-md shadow-lg">
                         {String(result.fileName).split('.').pop() || 'NODE'}
                     </span>
@@ -86,7 +80,7 @@ const LoraCard: React.FC<LoraCardProps> = ({ result, onDelete }) => {
                     <div className="flex items-center gap-3 mt-1.5">
                         <span className="text-[9px] text-hub-accent uppercase font-black tracking-widest">{result.fileSizeMB} MB</span>
                         <div className="w-1 h-1 rounded-full bg-white/20"></div>
-                        <span className="text-[9px] text-gray-400 uppercase font-black tracking-widest">Confidence: {(result.confidence || 0) * 100}%</span>
+                        <span className="text-[9px] text-gray-400 uppercase font-black tracking-widest">Confidence: {Math.floor((result.confidence || 0) * 100)}%</span>
                     </div>
                 </div>
             </div>
@@ -148,14 +142,14 @@ const LoraCard: React.FC<LoraCardProps> = ({ result, onDelete }) => {
             <div className="p-6 bg-black/40 border-t border-white/5 mt-auto">
                 <div className="flex gap-3">
                     <button
-                        onClick={handleIntegrate}
-                        disabled={isIntegrating || isPending}
+                        onClick={onToggleInjection}
+                        disabled={isPending}
                         className={`flex-grow flex items-center justify-center gap-3 px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] rounded-2xl transition-all shadow-xl active:scale-95 border ${
-                            intStatus === 'success' ? 'bg-emerald-600 border-emerald-500 text-white' : 'bg-hub-accent border-hub-accent/50 hover:bg-violet-500 text-white disabled:opacity-30'
+                            isInjected ? 'bg-emerald-600 border-emerald-500 text-white shadow-emerald-500/20' : 'bg-hub-accent border-hub-accent/50 hover:bg-violet-500 text-white disabled:opacity-30'
                         }`}
                     >
-                        {isIntegrating ? <LoaderIcon className="h-4 w-4 animate-spin" /> : intStatus === 'success' ? <CheckCircleIcon className="h-4 w-4" /> : <PlugIcon className="h-4 w-4" />}
-                        {isIntegrating ? 'Mounting...' : intStatus === 'success' ? 'Core Online' : 'Inject Logic'}
+                        {isInjected ? <CheckCircleIcon className="h-4 w-4" /> : <PlugIcon className="h-4 w-4" />}
+                        {isInjected ? 'Mounted' : 'Inject Logic'}
                     </button>
                     <button onClick={onDelete} className="p-4 bg-gray-800/80 hover:bg-red-600 text-gray-400 hover:text-white border border-white/5 rounded-2xl transition-all active:scale-90 shadow-lg">
                         <TrashIcon className="h-4 w-4" />

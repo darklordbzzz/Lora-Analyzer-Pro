@@ -8,10 +8,11 @@ import {
   GlobeIcon, ServerIcon
 } from './Icons';
 import * as gemini from '../services/geminiService';
-import { LLMModel } from '../types';
+import { LLMModel, AnalyzerTuningConfig } from '../types';
 
 interface PhotoRetouchProps {
     activeModel?: LLMModel;
+    tuning: AnalyzerTuningConfig;
 }
 
 interface RetouchHypothesis {
@@ -22,7 +23,7 @@ interface RetouchHypothesis {
     description: string;
 }
 
-const PhotoRetouch: React.FC<PhotoRetouchProps> = ({ activeModel }) => {
+const PhotoRetouch: React.FC<PhotoRetouchProps> = ({ activeModel, tuning }) => {
     const [originalImage, setOriginalImage] = useState<{ file: File; url: string } | null>(null);
     const [currentIterationUrl, setCurrentIterationUrl] = useState<string | null>(null);
     const [hypotheses, setHypotheses] = useState<RetouchHypothesis[]>([]);
@@ -34,14 +35,11 @@ const PhotoRetouch: React.FC<PhotoRetouchProps> = ({ activeModel }) => {
     const [currentPhaseMsg, setCurrentPhaseMsg] = useState('');
     const [showComparison, setShowComparison] = useState(false);
     
-    // Phase 1: Sensor Fusion Simulation State
     const [telemetry, setTelemetry] = useState({
         gyro: Array.from({ length: 20 }, () => Math.random() * 2 - 1),
         accel: Array.from({ length: 20 }, () => Math.random() * 0.5),
         trajectory: "Detected: 4.2° Pitch / -1.1° Yaw"
     });
-
-    const timerRef = useRef<number | null>(null);
 
     const handleSourceFile = (file: File) => {
       if (!file.type.startsWith('image/')) return;
@@ -50,7 +48,6 @@ const PhotoRetouch: React.FC<PhotoRetouchProps> = ({ activeModel }) => {
       setCurrentIterationUrl(url);
       setPassLogs(["PHASE 0:Retouch Core Initialized. Awaiting Optical Prior."]);
       
-      // Simulate Phase 2: Motion Estimation
       setIsAnalyzing(true);
       setTimeout(() => {
           setIsAnalyzing(false);
@@ -64,7 +61,6 @@ const PhotoRetouch: React.FC<PhotoRetouchProps> = ({ activeModel }) => {
         setHypotheses([]);
         setPassLogs(prev => ["PHASE 3:Initiating Multi-Hypothesis Sharp Reconstruction.", ...prev]);
 
-        // Phase 3.1: Candidate Generation
         const protocols = [
             { label: 'Semantic Sharp', prompt: 'PHASE 3:SEMANTIC EDGE LOCK. Reconstruct facial features and micro-textures using strictly verified latents. Reject hallucinated details.' },
             { label: 'Bionic Stabilize', prompt: 'PHASE 3:DECONVOLUTION MASTER. Invert directional motion smear based on estimated 4.2° Pitch trajectory prior.' },
@@ -75,8 +71,8 @@ const PhotoRetouch: React.FC<PhotoRetouchProps> = ({ activeModel }) => {
             const results = await Promise.all(protocols.map(async (p, i) => {
                 const res = await gemini.editImage(
                     originalImage.url, 
-                    `${p.prompt} 4K high-fidelity reconstruction.`, 
-                    []
+                    `${p.prompt} 4K high-fidelity reconstruction.`,
+                    tuning.unrestrictedNeuralUplink
                 );
                 return {
                     id: crypto.randomUUID(),
@@ -104,11 +100,7 @@ const PhotoRetouch: React.FC<PhotoRetouchProps> = ({ activeModel }) => {
 
     return (
         <div className="max-w-[1600px] mx-auto grid grid-cols-1 lg:grid-cols-12 gap-8 h-[calc(100vh-220px)] animate-in fade-in duration-700 overflow-hidden">
-            
-            {/* Sidebar: Phase 1 & 2 (Capture & Estimation) */}
             <div className="lg:col-span-4 flex flex-col gap-6 h-full overflow-y-auto custom-scrollbar pr-2 pb-12">
-                
-                {/* 1.1 Input Layer */}
                 <div 
                     className={`shrink-0 h-48 border-2 border-dashed rounded-[3rem] bg-gray-900/40 flex flex-col items-center justify-center transition-all cursor-pointer relative overflow-hidden group ${!originalImage ? 'border-indigo-500/40 hover:bg-gray-800/40' : 'border-gray-800'}`}
                     onClick={() => !originalImage && document.getElementById('retouch-source')?.click()}
@@ -130,7 +122,6 @@ const PhotoRetouch: React.FC<PhotoRetouchProps> = ({ activeModel }) => {
                     )}
                 </div>
 
-                {/* 1.2 Sensor Fusion (Telemetry) */}
                 <div className="bg-black/40 border border-white/5 rounded-[2.5rem] p-6 space-y-4 shadow-xl">
                     <div className="flex justify-between items-center">
                         <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.4em]">1.2 Sensor Prior</label>
@@ -147,7 +138,6 @@ const PhotoRetouch: React.FC<PhotoRetouchProps> = ({ activeModel }) => {
                     </div>
                 </div>
 
-                {/* 2.1 Motion estimation visualization */}
                 <div className="bg-black/40 border border-white/5 rounded-[2.5rem] p-6 space-y-4 shadow-xl">
                     <div className="flex justify-between items-center">
                         <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.4em]">2.1 Motion Kernel Map</label>
@@ -164,7 +154,6 @@ const PhotoRetouch: React.FC<PhotoRetouchProps> = ({ activeModel }) => {
                     </div>
                 </div>
 
-                {/* Command Panel */}
                 <div className="space-y-3">
                     <button 
                         onClick={generateHypotheses}
@@ -179,7 +168,6 @@ const PhotoRetouch: React.FC<PhotoRetouchProps> = ({ activeModel }) => {
                     <p className="text-[8px] text-gray-600 font-bold uppercase text-center tracking-widest opacity-60">Modeling realism over artificial sharpness.</p>
                 </div>
 
-                {/* Terminal Log (PHASE 0-8) */}
                 <div className="bg-black border border-white/5 rounded-[2rem] p-5 flex flex-col gap-3 shadow-inner">
                     <div className="flex items-center gap-2 text-emerald-500/60 border-b border-white/5 pb-2">
                         <TerminalIcon className="h-3 w-3" />
@@ -191,9 +179,7 @@ const PhotoRetouch: React.FC<PhotoRetouchProps> = ({ activeModel }) => {
                 </div>
             </div>
 
-            {/* Main Visualizer: Hypothesis Matrix (Phase 3 & 4) */}
             <div className="lg:col-span-8 bg-gray-900/60 border border-white/5 rounded-[4rem] h-full flex flex-col relative overflow-hidden shadow-2xl backdrop-blur-xl">
-                
                 <div className="px-10 py-6 border-b border-white/5 bg-black/40 flex justify-between items-center z-30">
                     <div className="flex items-center gap-4">
                         <h2 className="text-2xl font-black text-white uppercase tracking-tighter">Neural Darkroom</h2>
@@ -278,7 +264,6 @@ const PhotoRetouch: React.FC<PhotoRetouchProps> = ({ activeModel }) => {
                     )}
                 </div>
 
-                {/* Performance & GPU Layer (Phase 5) */}
                 <div className="px-12 py-5 bg-black/60 border-t border-white/5 flex justify-between items-center text-[9px] font-black uppercase tracking-[0.4em] text-gray-600">
                     <div className="flex items-center gap-8">
                         <span className="flex items-center gap-2">

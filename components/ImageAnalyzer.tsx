@@ -1,656 +1,516 @@
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { AnalyzerTuningConfig, ImageAnalysisResult, AnalysisStatus } from '../types';
+import { analyzeImageWithLLM } from '../services/geminiService';
 import { 
-  ImageIcon, XIcon, CopyIcon, 
-  CheckCircleIcon, LoaderIcon, BoxIcon, 
-  SparklesIcon, XCircleIcon, TerminalIcon,
-  LabIcon, TargetIcon, RefreshIcon, InfoIcon,
-  CodeBracketIcon, GlobeIcon, UserIcon, EditIcon, SaveIcon, DownloadIcon, UploadIcon
+  ImageIcon, LoaderIcon, SparklesIcon, XIcon, ChevronDownIcon, 
+  CopyIcon, CheckIcon, TargetIcon, PaletteIcon, 
+  RefreshIcon, UploadIcon, UserIcon, BoxIcon, DuplicateIcon,
+  PlusIcon, TrashIcon, DownloadIcon, SearchIcon
 } from './Icons';
-import { extractImageMetadata, ImageMeta } from '../services/imageMetadataService';
-import { analyzeImageWithLLM } from '../services/llmService';
-import { LLMModel, ImageAnalysisResult, AnalyzerTuningConfig } from '../types';
 
 interface ImageAnalyzerProps {
-    activeModel?: LLMModel;
-    tuning: AnalyzerTuningConfig;
-    setTuning: React.Dispatch<React.SetStateAction<AnalyzerTuningConfig>>;
-    toggles: Record<string, boolean>;
-    setToggles: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
+  tuning: AnalyzerTuningConfig;
+  setTuning: React.Dispatch<React.SetStateAction<AnalyzerTuningConfig>>;
+  onSaveResult: (entry: any) => void;
 }
 
-const SECTION_HEADERS = {
-  comp: "COMPOSITION DESCRIPTOR",
-  style: "ARTISTIC STYLE",
-  light: "LIGHTING & ILLUMINATION",
-  tech: "TECHNIQUE",
-  colors: "COLOR & GAMMA",
-  pose: "DETAILED POSE DESCRIPTOR",
-  action: "ACTION POSE IDENTIFIER",
-  appearance: "APPEARANCE REGISTRY",
-  preview: "TUNED PROMPT PREVIEW",
-  artists: "SUGGESTED ARTISTS"
+const WEATHER_SHADES = [
+  { name: 'Warm', color: '#ffb347' },
+  { name: 'Cool', color: '#89cff0' },
+  { name: 'Neutral', color: '#ffffff' },
+  { name: 'Ethereal', color: '#e0b0ff' },
+  { name: 'Cyber', color: '#00ff41' },
+  { name: 'Toxic', color: '#adff2f' },
+  { name: 'Sunset', color: '#ff5e5e' },
+  { name: 'None', color: 'transparent' }
+];
+
+const LogicToggle = ({ active, onChange }: { active: boolean, onChange: () => void }) => (
+  <label className="inline-flex items-center cursor-pointer scale-100">
+    <input type="checkbox" className="sr-only peer" checked={active} onChange={onChange} />
+    <div className="relative w-9 h-5 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600 shadow-inner"></div>
+  </label>
+);
+
+const ComboboxField = ({ label, value, options = [], onSelect, onAdd, onRemove }: any) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const filteredOptions = (options || []).filter((opt: string) => 
+    opt.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const handleAdd = () => {
+    const val = search.trim();
+    if (val && !(options || []).includes(val)) {
+      onAdd(val);
+      onSelect(val);
+      setSearch('');
+      setIsOpen(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2 relative" ref={wrapperRef}>
+      <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest px-1 block">{label}</label>
+      <div className="flex gap-2">
+        <div className="relative flex-grow group">
+          <input 
+            type="text" 
+            value={isOpen ? search : (value || '')} 
+            onFocus={() => { setIsOpen(true); setSearch(''); }}
+            onChange={e => setSearch(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && handleAdd()}
+            placeholder={`Type ${label.toLowerCase()}...`}
+            className="w-full bg-gray-900 border border-white/10 rounded-xl px-4 py-3 text-xs text-indigo-300 outline-none focus:border-indigo-500 transition-all shadow-inner"
+          />
+          <button 
+            type="button"
+            onClick={() => setIsOpen(!isOpen)}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-600 hover:text-indigo-400"
+          >
+            <ChevronDownIcon className={`h-4 w-4 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+          </button>
+        </div>
+        <button 
+          onClick={handleAdd}
+          disabled={!search.trim()}
+          className="p-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl shadow-lg transition-all active:scale-95 disabled:opacity-30 disabled:grayscale"
+          title="Add to library"
+        >
+          <PlusIcon className="h-4 w-4" />
+        </button>
+      </div>
+
+      {isOpen && (
+        <div className="absolute top-full left-0 right-0 mt-2 bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+          <div className="max-h-60 overflow-y-auto custom-scrollbar p-1.5">
+            {filteredOptions.length > 0 ? (
+              filteredOptions.map((opt: string) => (
+                <div 
+                  key={opt}
+                  className={`flex items-center justify-between p-2.5 rounded-xl transition-all group/item ${value === opt ? 'bg-indigo-600/20 text-indigo-300' : 'hover:bg-white/5 text-gray-400 hover:text-gray-200'}`}
+                >
+                  <button 
+                    className="flex-grow text-left text-[11px] font-black uppercase tracking-tight"
+                    onClick={() => { onSelect(opt); setIsOpen(false); setSearch(''); }}
+                  >
+                    {opt}
+                  </button>
+                  <button 
+                    onClick={(e) => { e.stopPropagation(); onRemove(opt); }}
+                    className="p-1 text-gray-600 hover:text-red-400 opacity-0 group-hover/item:opacity-100 transition-opacity"
+                  >
+                    <XIcon className="h-3 w-3" />
+                  </button>
+                </div>
+              ))
+            ) : (
+              <div className="p-4 text-center text-[10px] text-gray-600 uppercase font-black tracking-widest italic">
+                {search ? "No matching logic - press [+] to add" : "Protocol empty"}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 };
 
-const WEATHER_OPTIONS = [
-  "Sunny", "Clear", "Cloudy", "Stormy", "Foggy", "Snowing", "Raining", 
-  "Golden Hour", "Moonlight", "Overcast", "Hazy", "Sandstorm", 
-  "Cyberpunk Neon", "Apocalyptic", "Ethereal Glow"
-];
-
-const STYLE_OPTIONS = [
-  "Photo", "Cinematic", "Anime", "Drawing", "Digital Illustration", 
-  "Book Illustration", "Oil Painting", "Watercolor", "Sketch", 
-  "3D Render", "Pixel Art", "Concept Art", "Vogue Photography", 
-  "Ukiyo-e", "Cyberpunk", "Surrealism"
-];
-
-const COLOR_FILTERS = [
-  "None", "Warm Tones", "Cool Tones", "Sepia", "High Contrast", 
-  "Monochrome", "Pastel", "Neon/Vibrant", "Teal and Orange", 
-  "Vintage Film", "Desaturated", "Technicolor"
-];
-
-const ImageAnalyzer: React.FC<ImageAnalyzerProps> = ({ activeModel, tuning, setTuning, toggles, setToggles }) => {
-    const [image, setImage] = useState<{ file: File | null; url: string; meta: ImageMeta } | null>(null);
-    const [isAnalyzing, setIsAnalyzing] = useState(false);
-    const [isDragging, setIsDragging] = useState(false);
-    const [isDraggingConfig, setIsDraggingConfig] = useState(false);
-    const [result, setResult] = useState<ImageAnalysisResult | null>(null);
-    const [error, setError] = useState<string | null>(null);
-    const [copiedId, setCopiedId] = useState<string | null>(null);
-    const [configStatus, setConfigStatus] = useState<'idle' | 'saved' | 'exported' | 'imported' | 'error'>('idle');
-    const configInputRef = useRef<HTMLInputElement>(null);
-
-    // Load initial tuning from LocalStorage on mount
-    useEffect(() => {
-        const saved = localStorage.getItem('vision_auditor_config');
-        if (saved) {
-            try {
-                const parsed = JSON.parse(saved);
-                // Basic validation that it's a tuning object
-                if (parsed.adjustments) setTuning(parsed);
-            } catch (e) {
-                console.error("Failed to load saved vision configuration", e);
-            }
-        }
-    }, [setTuning]);
-
-    // Save tuning to LocalStorage whenever it changes
-    useEffect(() => {
-        localStorage.setItem('vision_auditor_config', JSON.stringify(tuning));
-    }, [tuning]);
-
-    const handleFile = useCallback(async (file: File) => {
-        if (file.name.endsWith('.auditjson')) {
-          handleImportConfig(file);
-          return;
-        }
-        if (!file.type.startsWith('image/')) return;
-        const url = URL.createObjectURL(file);
-        const meta = await extractImageMetadata(file);
-        setImage({ file, url, meta });
-        setResult(null);
-        setError(null);
-    }, []);
-
-    // Global Paste Listener
-    useEffect(() => {
-        const onPaste = (e: ClipboardEvent) => {
-            const items = e.clipboardData?.items;
-            if (!items) return;
-            for (let i = 0; i < items.length; i++) {
-                if (items[i].type.indexOf('image') !== -1) {
-                    const blob = items[i].getAsFile();
-                    if (blob) handleFile(blob);
-                }
-            }
-        };
-        window.addEventListener('paste', onPaste);
-        return () => window.removeEventListener('paste', onPaste);
-    }, [handleFile]);
-
-    const handleDragOver = (e: React.DragEvent) => {
-        e.preventDefault();
-        setIsDragging(true);
-    };
-
-    const handleDragLeave = (e: React.DragEvent) => {
-        e.preventDefault();
-        setIsDragging(false);
-    };
-
-    const handleDrop = (e: React.DragEvent) => {
-        e.preventDefault();
-        setIsDragging(false);
-        const files = e.dataTransfer.files;
-        if (files && files[0]) {
-            handleFile(files[0]);
-        }
-    };
-
-    const handleConfigDragOver = (e: React.DragEvent) => {
-        e.preventDefault();
-        setIsDraggingConfig(true);
-    };
-
-    const handleConfigDragLeave = () => {
-        setIsDraggingConfig(false);
-    };
-
-    const handleConfigDrop = (e: React.DragEvent) => {
-        e.preventDefault();
-        setIsDraggingConfig(false);
-        const files = e.dataTransfer.files;
-        if (files && files[0]) {
-            handleImportConfig(files[0]);
-        }
-    };
-
-    const handleAnalyze = async () => {
-        if (!image?.file || !activeModel) return;
-        setIsAnalyzing(true);
-        setError(null);
-        setResult(null);
-
-        try {
-            const data = await analyzeImageWithLLM(image.file, activeModel, undefined, tuning);
-            setResult(data);
-        } catch (e: any) {
-            setError(e.message);
-        } finally {
-            setIsAnalyzing(false);
-        }
-    };
-
-    const copyToClipboard = (text: string, id: string) => {
-        navigator.clipboard.writeText(text);
-        setCopiedId(id);
-        setTimeout(() => setCopiedId(null), 2000);
-    };
-
-    const handleExportConfig = () => {
-        const bundle = {
-            tuning,
-            result,
-            version: "4.0",
-            exportedAt: new Date().toISOString()
-        };
-        const configStr = JSON.stringify(bundle, null, 2);
-        const blob = new Blob([configStr], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        const name = image?.file?.name.split('.')[0] || 'vision_audit';
-        link.download = `${name}_${Date.now()}.auditjson`;
-        link.click();
-        URL.revokeObjectURL(url);
-        
-        setConfigStatus('exported');
-        setTimeout(() => setConfigStatus('idle'), 2000);
-    };
-
-    const handleImportConfig = async (file: File) => {
-        if (!file.name.endsWith('.auditjson') && !file.name.endsWith('.json')) {
-          setConfigStatus('error');
-          setTimeout(() => setConfigStatus('idle'), 2000);
-          return;
-        }
-
-        try {
-            const text = await file.text();
-            const bundle = JSON.parse(text);
-            
-            // Handle both flat config files and result-inclusive bundles
-            if (bundle.tuning) {
-                setTuning(bundle.tuning);
-                if (bundle.result) setResult(bundle.result);
-            } else if (bundle.adjustments) {
-                // Legacy or flat tuning file
-                setTuning(bundle);
-            } else {
-                throw new Error("Invalid audit structure");
-            }
-            
-            setConfigStatus('imported');
-            setTimeout(() => setConfigStatus('idle'), 2000);
-        } catch (e) {
-            console.error("Config import failed", e);
-            setConfigStatus('error');
-            setTimeout(() => setConfigStatus('idle'), 2000);
-        }
-    };
-
-    const handleCopySection = (id: keyof typeof SECTION_HEADERS, content: any) => {
-        const header = SECTION_HEADERS[id];
-        let body = "";
-        if (typeof content === 'string') body = content;
-        else if (Array.isArray(content)) body = content.join(', ');
-        else if (typeof content === 'object') body = JSON.stringify(content, null, 2);
-        
-        copyToClipboard(`${header}\n${body}`, id);
-    };
-
-    const handleCopyAll = () => {
-        if (!result) return;
-        let finalString = "";
-        
-        const sections: [keyof typeof SECTION_HEADERS, any][] = [
-            ['comp', result.compositionDescriptor],
-            ['style', result.artisticStyle],
-            ['light', result.lightingIllumination],
-            ['tech', result.technique],
-            ['colors', result.colorGamma],
-            ['pose', result.poseDescriptor],
-            ['action', result.actionPoseIdentifier],
-            ['appearance', result.appearanceRegistry],
-            ['preview', result.tunedPromptPreview],
-            ['artists', result.suggestedArtists]
-        ];
-
-        sections.forEach(([id, content]) => {
-            if (toggles[id] && content) {
-                let body = "";
-                if (typeof content === 'string') body = content;
-                else if (Array.isArray(content)) body = content.join(', ');
-                else if (typeof content === 'object') body = JSON.stringify(content, null, 2);
-                finalString += `${SECTION_HEADERS[id]}\n${body}\n\n`;
-            }
-        });
-
-        copyToClipboard(finalString.trim(), 'all');
-    };
-
-    const ToggleSwitch = ({ id }: { id: string }) => (
-        <button 
-            onClick={() => setToggles(prev => ({ ...prev, [id]: !prev[id] }))}
-            className={`w-8 h-4 rounded-full transition-all relative ${toggles[id] ? 'bg-hub-accent' : 'bg-gray-800'}`}
-        >
-            <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all`} style={{ left: toggles[id] ? '18px' : '2px' }} />
-        </button>
-    );
-
-    const ControlSlider = ({ label, value, min, max, onChange }: { label: string, value: number, min: number, max: number, onChange: (v: number) => void }) => (
-      <div className="space-y-2">
-        <div className="flex justify-between items-center text-[9px] font-black uppercase tracking-widest text-gray-500">
-          <span>{label}</span>
-          <span className="text-hub-accent">{value}</span>
+const Accordion = ({ id, title, icon: Icon, children, openSections, toggleSection, compact = false }: any) => (
+  <div className={`va-card rounded-[1.5rem] overflow-hidden mb-3 border transition-all ${openSections.has(id) ? 'border-indigo-500/30 bg-indigo-950/10' : 'border-white/5'}`}>
+    <div className={`flex items-center justify-between hover:bg-white/5 transition-colors cursor-pointer ${compact ? 'p-3 px-5' : 'p-4 px-6'}`} onClick={() => toggleSection(id)}>
+      <div className="flex items-center gap-4">
+        <div className={`p-2 rounded-xl ${openSections.has(id) ? 'bg-indigo-600 text-white' : 'bg-indigo-500/10 text-indigo-400'}`}>
+          <Icon className={compact ? "h-5 w-5" : "h-6 w-6"} />
         </div>
-        <input 
-          type="range" min={min} max={max} value={value} 
-          onChange={(e) => onChange(parseInt(e.target.value))}
-          className="w-full h-1 bg-gray-900 rounded-lg appearance-none cursor-pointer accent-hub-accent"
-        />
+        <span className={`font-black uppercase tracking-widest text-white ${compact ? 'text-xs' : 'text-sm'}`}>{title}</span>
       </div>
-    );
+      <ChevronDownIcon className={`h-5 w-5 text-gray-500 transition-transform ${openSections.has(id) ? 'rotate-180' : ''}`} />
+    </div>
+    {openSections.has(id) && (
+      <div className={`${compact ? 'p-3 px-5 pt-0' : 'p-4 px-6 pt-0'} border-t border-white/5 animate-in slide-in-from-top-1 duration-200`}>
+        {children}
+      </div>
+    )}
+  </div>
+);
 
-    return (
-        <div className="max-w-[1600px] mx-auto grid grid-cols-1 lg:grid-cols-12 gap-8 h-[calc(100vh-220px)] animate-in fade-in duration-500 overflow-hidden">
-            {/* Sidebar Controls */}
-            <div className="lg:col-span-4 flex flex-col gap-6 h-full overflow-y-auto custom-scrollbar pr-2 pb-12">
-                
-                <div 
-                    className={`shrink-0 h-48 border-2 border-dashed rounded-[3rem] flex flex-col items-center justify-center transition-all relative overflow-hidden ${isDragging ? 'bg-hub-accent/20 border-hub-accent shadow-[0_0_30px_rgba(139,92,246,0.2)]' : 'bg-gray-800/10 border-gray-700/50 hover:bg-gray-800/20'}`}
-                    onDragOver={handleDragOver}
-                    onDragLeave={handleDragLeave}
-                    onDrop={handleDrop}
-                    onClick={() => !image && document.getElementById('audit-upload')?.click()}
-                >
-                    <input id="audit-upload" type="file" className="hidden" accept="image/*,.auditjson" onChange={e => e.target.files?.[0] && handleFile(e.target.files[0])} />
-                    {image ? (
-                        <div className="w-full h-full p-8 relative flex items-center justify-center animate-in zoom-in-95 duration-500">
-                            {image.url ? (
-                              <img src={image.url} alt="Target" className="max-w-full max-h-full object-contain rounded-[2rem] shadow-2xl border border-white/5" />
-                            ) : (
-                              <div className="flex flex-col items-center gap-4 opacity-50">
-                                <BoxIcon className="h-16 w-16 text-indigo-400" />
-                                <p className="text-[10px] font-black uppercase tracking-widest">Metadata Only Mount</p>
-                              </div>
-                            )}
-                            <button onClick={(e) => { e.stopPropagation(); setImage(null); setResult(null); }} className="absolute top-10 right-10 p-4 bg-gray-950/80 backdrop-blur-xl text-white rounded-full hover:bg-red-600 shadow-2xl active:scale-90 transition-all z-10"><XIcon className="h-6 w-6" /></button>
-                            <div className="scanning-line opacity-30 pointer-events-none"></div>
-                        </div>
-                    ) : (
-                        <div className="text-center p-12 space-y-6 cursor-pointer group">
-                            <div className="p-10 bg-gray-900 rounded-[3rem] border border-gray-800 shadow-xl inline-block relative overflow-hidden transition-transform group-hover:scale-105">
-                                <ImageIcon className={`h-16 w-16 relative z-10 transition-colors ${isDragging ? 'text-hub-accent' : 'text-hub-accent/40 group-hover:text-hub-accent'}`} />
-                            </div>
-                            <div className="space-y-2">
-                                <h3 className="text-2xl font-black text-gray-500 uppercase tracking-widest transition-colors group-hover:text-gray-300">Visual Target</h3>
-                                <p className="text-gray-600 font-bold text-[10px] uppercase tracking-[0.2em]">Click, Drag Image or .auditjson</p>
-                            </div>
-                        </div>
-                    )}
-                </div>
+const EditableField = ({ label, value, onChange, onCopy, active, onToggle }: any) => (
+  <div className={`space-y-1.5 group relative mt-2 transition-opacity ${active ? 'opacity-100' : 'opacity-40'}`}>
+    <div className="flex justify-between items-center px-1">
+      <div className="flex items-center gap-3">
+        <span className="text-[11px] font-black text-indigo-500/60 uppercase tracking-[0.2em]">{label}</span>
+        <LogicToggle active={active} onChange={onToggle} />
+      </div>
+      <button onClick={onCopy} className="p-1 hover:text-indigo-400 text-gray-600 transition-colors opacity-0 group-hover:opacity-100">
+        <CopyIcon className="h-4 w-4" />
+      </button>
+    </div>
+    <textarea 
+      disabled={!active}
+      value={value}
+      onChange={e => onChange(e.target.value)}
+      className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-sm text-gray-200 font-medium resize-none outline-none focus:border-indigo-500/50 focus:bg-black/60 transition-all custom-scrollbar"
+      rows={Math.max(2, Math.ceil((value?.length || 0) / 80) || 1)}
+    />
+  </div>
+);
 
-                {/* Configuration Matrix */}
-                <div 
-                    onDragOver={handleConfigDragOver}
-                    onDragLeave={handleConfigDragLeave}
-                    onDrop={handleConfigDrop}
-                    className={`bg-gray-950/40 border transition-all rounded-[2.5rem] p-8 space-y-8 shadow-2xl ${isDraggingConfig ? 'border-hub-accent bg-hub-accent/5 ring-4 ring-hub-accent/20 scale-[1.02]' : 'border-white/10'}`}
-                >
-                    <div className="flex items-center justify-between border-b border-white/5 pb-4">
-                        <div className="flex items-center gap-3">
-                            <EditIcon className="h-5 w-5 text-hub-accent" />
-                            <h4 className="text-white font-black text-[11px] uppercase tracking-[0.3em]">Neural Tuner</h4>
-                        </div>
-                        <div className="flex gap-2">
-                            <input 
-                              type="file" 
-                              ref={configInputRef} 
-                              className="hidden" 
-                              accept=".auditjson,.json" 
-                              onChange={e => e.target.files?.[0] && handleImportConfig(e.target.files[0])} 
-                            />
-                            <button 
-                                onClick={() => configInputRef.current?.click()}
-                                title="Load audit bundle (.auditjson)"
-                                className={`p-2.5 rounded-xl transition-all border border-white/5 shadow-inner group ${configStatus === 'imported' ? 'bg-emerald-500 text-white' : configStatus === 'error' ? 'bg-red-500 text-white' : 'bg-gray-900 hover:bg-gray-800 text-gray-500 hover:text-white'}`}
-                            >
-                                {configStatus === 'imported' ? <CheckCircleIcon className="h-4 w-4" /> : configStatus === 'error' ? <XCircleIcon className="h-4 w-4" /> : <UploadIcon className="h-4 w-4" />}
-                            </button>
-                            <button 
-                                onClick={handleExportConfig}
-                                title="Export audit bundle to disk"
-                                className="p-2.5 bg-gray-900 hover:bg-hub-accent text-gray-500 hover:text-white rounded-xl transition-all border border-white/5 shadow-inner group"
-                            >
-                                {configStatus === 'exported' ? <CheckCircleIcon className="h-4 w-4" /> : <DownloadIcon className="h-4 w-4" />}
-                            </button>
-                        </div>
-                    </div>
+const ImpactGauge = ({ label, value, min, max, onChange }: any) => (
+  <div className="space-y-2">
+    <div className="flex justify-between items-center px-1">
+      <span className="text-[11px] font-black text-gray-500 uppercase tracking-widest">{label}</span>
+      <span className="text-indigo-400 font-mono text-sm font-bold">{value}%</span>
+    </div>
+    <input type="range" min={min} max={max} value={value} onChange={e => onChange(parseInt(e.target.value))} className="w-full h-1 bg-gray-800 rounded-lg appearance-none cursor-pointer accent-indigo-500" />
+  </div>
+);
 
-                    <div className="space-y-3">
-                        <div className="flex justify-between items-center px-1">
-                            <label className="text-gray-500 font-black text-[10px] uppercase tracking-widest">Contextual Injection</label>
-                            <span className="text-[8px] font-black text-gray-600 uppercase tracking-widest opacity-40">Auto-saved to Vault</span>
-                        </div>
-                        <textarea 
-                          value={tuning.keywords}
-                          onChange={(e) => setTuning({...tuning, keywords: e.target.value})}
-                          placeholder="Inject keywords (e.g. Cyberpunk, 8k, cinematic, futuristic)..."
-                          className="w-full h-24 bg-black/40 border border-white/5 rounded-2xl p-4 text-gray-200 text-[10px] outline-none focus:border-hub-accent transition-all resize-none shadow-inner"
-                        />
-                    </div>
+const ImageAnalyzer: React.FC<ImageAnalyzerProps> = ({ tuning, setTuning, onSaveResult }) => {
+  const [image, setImage] = useState<{ file: File; url: string; base64?: string } | null>(null);
+  const [status, setStatus] = useState<AnalysisStatus>(AnalysisStatus.IDLE);
+  const [result, setResult] = useState<ImageAnalysisResult | null>(null);
+  const [logs, setLogs] = useState<string[]>([]);
+  const logEndRef = useRef<HTMLDivElement>(null);
+  const [openSections, setOpenSections] = useState<Set<string>>(new Set(['input', 'results-foundation', 'results-subject', 'results-synthesis']));
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [activeToggles, setActiveToggles] = useState<Record<string, boolean>>({
+    composition: true, style: true, lighting: true, technique: true, colors: true, 
+    pose: true, kinetic: true, attire: true, hair: true, synthesis: true
+  });
 
-                    <div className="space-y-4">
-                        <label className="text-gray-500 font-black text-[10px] uppercase tracking-widest ml-1 block mb-2">Protocol Preference</label>
-                        
-                        <div className="space-y-2">
-                          <label className="text-gray-500 font-black text-[9px] uppercase tracking-widest ml-1">Artistic Style Filter</label>
-                          <select 
-                            value={tuning.artisticStylePreference} 
-                            onChange={(e) => setTuning({...tuning, artisticStylePreference: e.target.value})}
-                            className="w-full bg-black/60 border border-white/5 rounded-xl px-3 py-2 text-white text-[10px] outline-none focus:border-hub-accent appearance-none cursor-pointer"
-                          >
-                            {STYLE_OPTIONS.map(style => <option key={style} value={style}>{style}</option>)}
-                          </select>
-                        </div>
+  useEffect(() => { logEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [logs]);
+  const addLog = (msg: string) => setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
 
-                        <div className="space-y-2">
-                          <label className="text-gray-500 font-black text-[9px] uppercase tracking-widest ml-1">Color Grade Preset</label>
-                          <select 
-                            value={tuning.colorFilterPreference} 
-                            onChange={(e) => setTuning({...tuning, colorFilterPreference: e.target.value})}
-                            className="w-full bg-black/60 border border-white/5 rounded-xl px-3 py-2 text-white text-[10px] outline-none focus:border-hub-accent appearance-none cursor-pointer"
-                          >
-                            {COLOR_FILTERS.map(filter => <option key={filter} value={filter}>{filter}</option>)}
-                          </select>
-                        </div>
-                    </div>
+  const toggleSection = (id: string) => {
+    setOpenSections(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
 
-                    <div className="space-y-4">
-                        <label className="text-gray-500 font-black text-[10px] uppercase tracking-widest ml-1 block mb-2">Detailed Protocol Audits</label>
-                        <div className="flex items-center justify-between p-3 bg-white/5 rounded-xl border border-white/5">
-                            <div className="flex items-center gap-3">
-                                <TargetIcon className="h-4 w-4 text-hub-accent" />
-                                <span className="text-gray-300 font-black text-[10px] uppercase">Kinetic Pose Audit</span>
-                            </div>
-                            <button 
-                                onClick={() => setTuning({...tuning, deepPoseAudit: !tuning.deepPoseAudit})}
-                                className={`w-8 h-4 rounded-full transition-all relative ${tuning.deepPoseAudit ? 'bg-hub-accent' : 'bg-gray-800'}`}
-                            >
-                                <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all`} style={{ left: tuning.deepPoseAudit ? '18px' : '2px' }} />
-                            </button>
-                        </div>
-                        <div className="flex items-center justify-between p-3 bg-white/5 rounded-xl border border-white/5">
-                            <div className="flex items-center gap-3">
-                                <UserIcon className="h-4 w-4 text-hub-accent" />
-                                <span className="text-gray-300 font-black text-[10px] uppercase">Appearance Registry</span>
-                            </div>
-                            <button 
-                                onClick={() => setTuning({...tuning, appearanceAudit: !tuning.appearanceAudit})}
-                                className={`w-8 h-4 rounded-full transition-all relative ${tuning.appearanceAudit ? 'bg-hub-accent' : 'bg-gray-800'}`}
-                            >
-                                <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all`} style={{ left: tuning.appearanceAudit ? '18px' : '2px' }} />
-                            </button>
-                        </div>
-                    </div>
+  const handleFile = async (file: File) => {
+    if (!file.type.startsWith('image/')) return;
+    const reader = new FileReader();
+    reader.onload = (e) => setImage({ file, url: URL.createObjectURL(file), base64: e.target?.result as string });
+    reader.readAsDataURL(file);
+    setResult(null); setLogs([]); setStatus(AnalysisStatus.IDLE);
+  };
 
-                    <div className="space-y-6">
-                        <label className="text-gray-500 font-black text-[10px] uppercase tracking-widest ml-1">Synthesis Adjusters</label>
-                        <ControlSlider label="Color Temperature" min={-100} max={100} value={tuning.adjustments.colorTemperature} onChange={(v) => setTuning({...tuning, adjustments: {...tuning.adjustments, colorTemperature: v}})} />
-                        <ControlSlider label="Lighting Intensity" min={0} max={200} value={tuning.adjustments.lightingIntensity} onChange={(v) => setTuning({...tuning, adjustments: {...tuning.adjustments, lightingIntensity: v}})} />
-                        <div className="space-y-2">
-                          <label className="text-gray-500 font-black text-[9px] uppercase tracking-widest ml-1">Weather Condition Matrix</label>
-                          <select 
-                            value={tuning.adjustments.weatherCondition} 
-                            onChange={(e) => setTuning({...tuning, adjustments: {...tuning.adjustments, weatherCondition: e.target.value}})}
-                            className="w-full bg-black/60 border border-white/5 rounded-xl px-3 py-2 text-white text-[10px] outline-none focus:border-hub-accent appearance-none cursor-pointer"
-                          >
-                            {WEATHER_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
-                          </select>
-                        </div>
-                        <ControlSlider label="Pose Rigidity" min={0} max={100} value={tuning.adjustments.poseRigidity} onChange={(v) => setTuning({...tuning, adjustments: {...tuning.adjustments, poseRigidity: v}})} />
-                        <ControlSlider label="Style weight" min={0} max={100} value={tuning.adjustments.styleWeight} onChange={(v) => setTuning({...tuning, adjustments: {...tuning.adjustments, styleWeight: v}})} />
-                    </div>
+  const handleAnalyze = async () => {
+    if (!image) return;
+    setStatus(AnalysisStatus.PENDING);
+    setLogs(["PROTOCOL INITIALIZED: Awaiting neural tunnel..."]);
+    try {
+      const data = await analyzeImageWithLLM(image.file, tuning, (msg) => addLog(msg));
+      setResult(data);
+      setStatus(AnalysisStatus.COMPLETED);
+      addLog("SUCCESS: Neural audit protocol finalized.");
+      
+      const v4_scheme = {
+        tuning: JSON.parse(JSON.stringify(tuning)),
+        result: data,
+        version: "4.1",
+        exportedAt: new Date().toISOString()
+      };
+      onSaveResult({ ...v4_scheme, id: crypto.randomUUID(), fileName: image.file.name, sourceImageBase64: image.base64 });
+    } catch (e: any) {
+      addLog(`SIGNAL_FAILURE: ${e.message}`); 
+      setStatus(AnalysisStatus.FAILED);
+    }
+  };
 
-                    <div className="p-4 bg-hub-cyan/5 rounded-2xl border border-hub-cyan/20 flex gap-4 items-center">
-                        <InfoIcon className="h-4 w-4 text-hub-cyan shrink-0" />
-                        <p className="text-[8px] font-black uppercase text-gray-500 leading-tight">Pro Version mappings active: <br/><span className="text-white opacity-80">%AppData%\AIHUB\vision_CFG\</span></p>
-                    </div>
-                </div>
+  const handleResultChange = (path: string, val: any) => {
+    if (!result) return;
+    const updated = JSON.parse(JSON.stringify(result));
+    const keys = path.split('.');
+    let current: any = updated;
+    for (let i = 0; i < keys.length - 1; i++) current = current[keys[i]];
+    current[keys[keys.length - 1]] = val;
+    setResult(updated);
+  };
 
-                <div className="bg-gray-950/60 border border-gray-800 rounded-[2.5rem] p-8 space-y-4 shadow-2xl">
-                    <button 
-                        onClick={handleAnalyze} 
-                        disabled={!image?.file || isAnalyzing}
-                        className={`w-full py-5 rounded-[1.5rem] font-black uppercase tracking-[0.4em] text-xs transition-all flex items-center justify-center gap-4 border-2 ${!image?.file || isAnalyzing ? 'bg-gray-800 text-gray-600 border-gray-700' : 'bg-hub-accent border-hub-accent/50 hover:bg-violet-500 text-white shadow-xl active:scale-95'}`}
-                    >
-                        {isAnalyzing ? <LoaderIcon className="h-5 w-5 animate-spin" /> : <SparklesIcon className="h-5 w-5" />}
-                        {isAnalyzing ? 'Processing' : 'Initiate Tuned Audit'}
-                    </button>
-                    <p className="text-gray-600 font-bold text-[9px] text-center uppercase tracking-widest opacity-60">Engine: {activeModel?.name || 'Offline'}</p>
-                </div>
-            </div>
+  const copyField = (text: string, id: string) => {
+    navigator.clipboard.writeText(text); setCopiedId(id);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
 
-            {/* Analysis Results View */}
-            <div className="lg:col-span-8 bg-gray-900/40 border border-gray-700/50 rounded-[4rem] flex flex-col h-full overflow-hidden shadow-2xl backdrop-blur-md">
-                <div className="p-10 border-b border-gray-700/50 bg-gray-900/60 backdrop-blur-xl sticky top-0 z-30 flex justify-between items-center">
-                    <h2 className="text-white font-black text-3xl uppercase tracking-tighter flex items-center gap-4">
-                        <BoxIcon className="h-8 w-8 text-hub-accent" /> Vision Auditor
-                    </h2>
-                    {result && (
-                      <button 
-                        onClick={handleCopyAll}
-                        className="px-8 py-3.5 bg-white text-black font-black uppercase tracking-widest text-[10px] rounded-2xl hover:scale-105 active:scale-95 transition-all flex items-center gap-3 shadow-xl"
-                      >
-                        {copiedId === 'all' ? <CheckCircleIcon className="h-4 w-4" /> : <CopyIcon className="h-4 w-4" />}
-                        {copiedId === 'all' ? 'Packet Copied' : 'Copy Full Analysis'}
-                      </button>
-                    )}
-                </div>
+  const handleCopyV4Scheme = () => {
+    if (!result) return;
+    const v4_scheme = {
+      tuning: JSON.parse(JSON.stringify(tuning)),
+      result: result,
+      version: "4.1",
+      exportedAt: new Date().toISOString()
+    };
+    const blob = new Blob([JSON.stringify(v4_scheme, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `AI_HUB_AUDIT_${image?.file.name.split('.')[0] || 'ARCHIVE'}.auditjson`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
-                <div className="flex-grow p-12 overflow-y-auto custom-scrollbar">
-                    {isAnalyzing ? (
-                        <div className="h-full flex flex-col items-center justify-center space-y-12">
-                            <LoaderIcon className="h-32 w-32 text-hub-accent animate-[spin_3s_linear_infinite]" />
-                            <h3 className="text-white font-black text-3xl uppercase tracking-[0.4em] animate-pulse text-center leading-tight">Interrogating Visual <br/>Bitstream...</h3>
-                        </div>
-                    ) : result ? (
-                        <div className="space-y-8 animate-in fade-in duration-1000 pb-20">
-                            
-                            {/* Tuned Prompt Preview Section - Primary */}
-                            {result.tunedPromptPreview && (
-                              <div className={`p-8 rounded-[3rem] border transition-all bg-hub-accent/10 border-hub-accent/30 shadow-[0_0_40px_rgba(139,92,246,0.1)] relative overflow-hidden group ${toggles.preview ? '' : 'opacity-40 grayscale'}`}>
-                                <div className="absolute top-0 right-0 p-12 opacity-[0.05] pointer-events-none group-hover:scale-150 transition-transform duration-[3s]">
-                                    <SparklesIcon className="h-48 w-48 text-white" />
-                                </div>
-                                <div className="flex justify-between items-center mb-6 relative z-10">
-                                  <div className="flex items-center gap-3">
-                                    <SparklesIcon className="h-5 w-5 text-hub-accent" />
-                                    <span className="text-white font-black text-[11px] uppercase tracking-[0.4em]">Tuned Prompt Preview</span>
-                                  </div>
-                                  <div className="flex items-center gap-4">
-                                    <button onClick={() => handleCopySection('preview', result.tunedPromptPreview)} className="text-gray-500 hover:text-white transition-colors">
-                                      {copiedId === 'preview' ? <CheckCircleIcon className="h-5 w-5 text-green-500" /> : <CopyIcon className="h-5 w-5" />}
-                                    </button>
-                                    <ToggleSwitch id="preview" />
-                                  </div>
-                                </div>
-                                <div className="bg-black/40 p-6 rounded-2xl border border-white/5 relative z-10">
-                                  <p className="text-white text-lg leading-relaxed font-mono italic">"{result.tunedPromptPreview}"</p>
-                                </div>
-                              </div>
-                            )}
+  const handleCopyAll = () => {
+    if (!result) return;
+    let text = "";
+    if (activeToggles.composition) text += `[COMPOSITION]: ${result.compositionDescriptor}\n\n`;
+    if (activeToggles.style) text += `[ARTISTIC LOGIC]: ${result.artisticStyle}\n\n`;
+    if (activeToggles.lighting) text += `[LIGHTING PROTOCOL]: ${result.lightingIllumination}\n\n`;
+    if (activeToggles.technique) text += `[EXECUTION METHOD]: ${result.technique}\n\n`;
+    if (activeToggles.colors) text += `[COLOR CALIBRATION]: ${result.colorGamma}\n\n`;
+    
+    if (result.suggestedArtists && result.suggestedArtists.length > 0) {
+      text += `Suggested Artists: ${result.suggestedArtists.join(', ')}\n\n`;
+    }
 
-                            {/* Appearance Registry Section */}
-                            {result.appearanceRegistry && (
-                              <div className={`p-8 rounded-[2.5rem] border transition-all ${toggles.appearance ? 'bg-gray-950/40 border-gray-800' : 'bg-gray-900/20 border-gray-900/50 opacity-40'}`}>
-                                <div className="flex justify-between items-center mb-6">
-                                  <div className="flex items-center gap-3">
-                                    <UserIcon className="h-5 w-5 text-hub-accent" />
-                                    <span className="text-hub-accent font-black text-[11px] uppercase tracking-[0.3em]">Appearance Registry</span>
-                                  </div>
-                                  <div className="flex items-center gap-4">
-                                    <button onClick={() => handleCopySection('appearance', result.appearanceRegistry)} className="text-gray-500 hover:text-white transition-colors">
-                                      {copiedId === 'appearance' ? <CheckCircleIcon className="h-5 w-5 text-green-500" /> : <CopyIcon className="h-5 w-5" />}
-                                    </button>
-                                    <ToggleSwitch id="appearance" />
-                                  </div>
-                                </div>
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                                  <div className="space-y-4">
-                                    <span className="text-gray-500 font-black text-[9px] uppercase tracking-widest block">Attire Architecture</span>
-                                    <p className="text-gray-200 text-sm leading-relaxed">{result.appearanceRegistry.attire}</p>
-                                  </div>
-                                  <div className="space-y-4">
-                                    <span className="text-gray-500 font-black text-[9px] uppercase tracking-widest block">Hair & Styling</span>
-                                    <p className="text-gray-200 text-sm leading-relaxed">{result.appearanceRegistry.haircutStyle}</p>
-                                  </div>
-                                </div>
-                                <div className="mt-8 pt-6 border-t border-white/5">
-                                  <span className="text-gray-500 font-black text-[9px] uppercase tracking-widest block mb-4">Accessories</span>
-                                  <div className="flex flex-wrap gap-2">
-                                    {(result.appearanceRegistry.accessories || []).map((acc, i) => (
-                                      <span key={i} className="px-3 py-1 bg-gray-900 text-gray-400 text-[10px] font-bold uppercase rounded-lg border border-white/5">{acc}</span>
-                                    ))}
-                                  </div>
-                                </div>
-                              </div>
-                            )}
+    if (activeToggles.pose) text += `[LIMBS POSITION DETAIL]: ${result.poseDescriptor}\n\n`;
+    if (activeToggles.kinetic) text += `[KINETIC STATE]: ${result.actionPoseIdentifier}\n\n`;
+    if (activeToggles.attire) text += `[ATTIRE ARCHETYPE]: ${result.appearanceRegistry?.attire}\n\n`;
+    if (activeToggles.hair) text += `[GROOMING SPECS]: ${result.appearanceRegistry?.haircutStyle}\n\n`;
+    if (result.appearanceRegistry?.accessories && result.appearanceRegistry.accessories.length > 0) {
+      text += `[ACCESSORY REGISTRY]: ${result.appearanceRegistry.accessories.join(', ')}\n\n`;
+    }
+    if (activeToggles.synthesis) text += `[MASTER GENERATION PROMPT]\n${result.tunedPromptPreview}\n\n`;
+    
+    navigator.clipboard.writeText(text.trim());
+    setCopiedId('copy-all');
+    setTimeout(() => setCopiedId(null), 2000);
+  };
 
-                            {/* Action Pose Identifier */}
-                            {result.actionPoseIdentifier && (
-                              <div className={`p-8 rounded-[2.5rem] border transition-all ${toggles.action ? 'bg-gray-950/40 border-gray-800' : 'bg-gray-900/20 border-gray-900/50 opacity-40'}`}>
-                                <div className="flex justify-between items-center mb-6">
-                                  <div className="flex items-center gap-3">
-                                    <TargetIcon className="h-5 w-5 text-hub-accent" />
-                                    <span className="text-hub-accent font-black text-[11px] uppercase tracking-[0.3em]">Kinetic Pose Audit</span>
-                                  </div>
-                                  <div className="flex items-center gap-4">
-                                    <button onClick={() => handleCopySection('action', result.actionPoseIdentifier)} className="text-gray-500 hover:text-white transition-colors">
-                                      {copiedId === 'action' ? <CheckCircleIcon className="h-5 w-5 text-green-500" /> : <CopyIcon className="h-5 w-5" />}
-                                    </button>
-                                    <ToggleSwitch id="action" />
-                                  </div>
-                                </div>
-                                <div className="bg-black/40 p-6 rounded-2xl border border-white/5">
-                                  <p className="text-white text-sm font-medium italic leading-relaxed">{result.actionPoseIdentifier}</p>
-                                </div>
-                              </div>
-                            )}
+  const handleImportAudit = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const data = JSON.parse(event.target?.result as string);
+        if (data.tuning) setTuning(prev => ({ ...prev, ...data.tuning }));
+        if (data.result) setResult(data.result);
+        addLog("SUCCESS: Archive imported.");
+      } catch (err) {
+        addLog("ERROR: Import failed. Invalid structure.");
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
 
-                            {/* Standard Analysis Grid */}
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                              {[
-                                { id: 'comp', title: 'Composition Blueprint', content: result.compositionDescriptor, icon: <TargetIcon className="h-4 w-4" /> },
-                                { id: 'style', title: 'Architectural Style', content: result.artisticStyle, icon: <BoxIcon className="h-4 w-4" /> }
-                              ].map(sec => (
-                                <div key={sec.id} className={`p-8 rounded-[2.5rem] border transition-all ${toggles[sec.id] ? 'bg-gray-950/40 border-gray-800' : 'bg-gray-900/20 border-gray-900/50 opacity-40'}`}>
-                                  <div className="flex justify-between items-center mb-6">
-                                    <div className="flex items-center gap-3">
-                                      <div className="text-hub-accent">{sec.icon}</div>
-                                      <span className="text-hub-accent font-black text-[10px] uppercase tracking-[0.3em]">{sec.title}</span>
-                                    </div>
-                                    <div className="flex items-center gap-4">
-                                      <button onClick={() => handleCopySection(sec.id as any, sec.content)} className="text-gray-500 hover:text-white transition-colors">
-                                        {copiedId === sec.id ? <CheckCircleIcon className="h-4 w-4 text-green-500" /> : <CopyIcon className="h-4 w-4" />}
-                                      </button>
-                                      <ToggleSwitch id={sec.id} />
-                                    </div>
-                                  </div>
-                                  <p className="text-gray-100 text-sm leading-relaxed font-medium">{sec.content}</p>
-                                </div>
-                              ))}
-                            </div>
+  const handleResetCanvas = () => {
+    setImage(null);
+    setResult(null);
+    setStatus(AnalysisStatus.IDLE);
+    setLogs([]);
+  };
 
-                            {[
-                              { id: 'pose', title: 'Static Pose Registry', content: result.poseDescriptor, icon: <UserIcon className="h-4 w-4" /> },
-                              { id: 'light', title: 'Illumination Matrix', content: result.lightingIllumination, icon: <SparklesIcon className="h-4 w-4" /> },
-                              { id: 'tech', title: 'Synthesis Technique', content: result.technique, icon: <LabIcon className="h-4 w-4" /> },
-                              { id: 'colors', title: 'Colorimetric Gamma', content: result.colorGamma, icon: <ImageIcon className="h-4 w-4" /> }
-                            ].map(sec => (
-                              <div key={sec.id} className={`p-8 rounded-[2.5rem] border transition-all ${toggles[sec.id] ? 'bg-gray-950/40 border-gray-800' : 'bg-gray-900/20 border-gray-900/50 opacity-40'}`}>
-                                <div className="flex justify-between items-center mb-4">
-                                  <div className="flex items-center gap-3">
-                                    <div className="text-hub-accent">{sec.icon}</div>
-                                    <span className="text-hub-accent font-black text-[10px] uppercase tracking-[0.3em]">{sec.title}</span>
-                                  </div>
-                                  <div className="flex items-center gap-4">
-                                    <button onClick={() => handleCopySection(sec.id as any, sec.content)} className="text-gray-500 hover:text-white transition-colors">
-                                      {copiedId === sec.id ? <CheckCircleIcon className="h-4 w-4 text-green-500" /> : <CopyIcon className="h-4 w-4" />}
-                                    </button>
-                                    <ToggleSwitch id={sec.id} />
-                                  </div>
-                                </div>
-                                <p className="text-gray-100 text-sm leading-relaxed">{sec.content}</p>
-                              </div>
-                            ))}
-
-                            <div className={`p-8 rounded-[2.5rem] border transition-all ${toggles.artists ? 'bg-gray-950/40 border-gray-800' : 'bg-gray-900/20 border-gray-900/50 opacity-40'}`}>
-                                <div className="flex justify-between items-center mb-6">
-                                  <div className="flex items-center gap-3">
-                                    <SparklesIcon className="h-4 w-4 text-hub-accent" />
-                                    <span className="text-hub-accent font-black text-[10px] uppercase tracking-[0.3em]">Inferred Aesthetic Artists</span>
-                                  </div>
-                                  <div className="flex items-center gap-4">
-                                    <button onClick={() => handleCopySection('artists', result.suggestedArtists)} className="text-gray-500 hover:text-white transition-colors">
-                                      {copiedId === 'artists' ? <CheckCircleIcon className="h-4 w-4 text-green-500" /> : <CopyIcon className="h-4 w-4" />}
-                                    </button>
-                                    <ToggleSwitch id="artists" />
-                                  </div>
-                                </div>
-                                <div className="flex flex-wrap gap-3">
-                                    {(result.suggestedArtists || []).map((artist, i) => (
-                                        <span key={i} className="px-5 py-2 bg-hub-accent/10 text-hub-accent text-[10px] font-black uppercase tracking-widest rounded-xl border border-hub-accent/20">
-                                            {artist}
-                                        </span>
-                                    ))}
-                                </div>
-                            </div>
-                        </div>
-                    ) : (
-                        <div className="h-full flex flex-col items-center justify-center opacity-10 grayscale">
-                            <BoxIcon className="h-48 w-48 mb-8" />
-                            <h4 className="text-white font-black text-4xl uppercase tracking-[0.5em]">Kernel Idle</h4>
-                            <p className="font-black text-[11px] uppercase tracking-[0.3em] mt-4">Load Target Bitstream to Initiate Audit</p>
-                        </div>
-                    )}
-                </div>
-            </div>
+  return (
+    <div className="max-w-[1500px] mx-auto space-y-6 animate-in fade-in duration-500 pb-12">
+      {/* Primary Status & Action Deck */}
+      <div className="flex items-center justify-between bg-gray-900/80 p-4 rounded-2xl border border-white/10 sticky top-24 z-40 backdrop-blur-2xl shadow-2xl">
+        <div className="flex items-center gap-8 px-4">
+          <div className="flex items-center gap-4">
+            <div className={`w-3 h-3 rounded-full ${status === AnalysisStatus.PENDING ? 'bg-indigo-500 animate-pulse shadow-[0_0_10px_#6366f1]' : status === AnalysisStatus.COMPLETED ? 'bg-emerald-500 shadow-[0_0_10px_#10b981]' : status === AnalysisStatus.FAILED ? 'bg-red-500' : 'bg-gray-600'}`} />
+            <span className="text-xs font-black uppercase tracking-widest text-gray-400">Node Status: {status}</span>
+          </div>
         </div>
-    );
+        <div className="flex items-center gap-3">
+          <label className="px-4 py-2 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white rounded-xl text-[10px] font-black uppercase transition-all flex items-center gap-2 border border-white/5 cursor-pointer">
+            <UploadIcon className="h-3 w-3" />
+            Import
+            <input type="file" className="hidden" accept=".auditjson,.json" onChange={handleImportAudit} />
+          </label>
+          {result && (
+            <button 
+              onClick={handleCopyV4Scheme}
+              className="px-4 py-2 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white rounded-xl text-[10px] font-black uppercase transition-all flex items-center gap-2 border border-white/5"
+            >
+              <DownloadIcon className="h-3 w-3" />
+              Export Archive
+            </button>
+          )}
+          <button onClick={handleAnalyze} disabled={!image || status === AnalysisStatus.PENDING} className={`px-10 py-3 rounded-xl font-black uppercase text-sm tracking-[0.2em] transition-all flex items-center gap-3 shadow-xl ${!image || status === AnalysisStatus.PENDING ? 'bg-gray-800 text-gray-600' : 'bg-indigo-600 text-white hover:bg-indigo-500 active:scale-95'}`}>
+            {status === AnalysisStatus.PENDING ? <LoaderIcon className="h-5 w-5 animate-spin" /> : <SparklesIcon className="h-5 w-5" />}
+            {status === AnalysisStatus.PENDING ? 'Analyzing...' : 'Initiate Audit'}
+          </button>
+        </div>
+      </div>
+
+      {/* Configuration Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <div className="lg:col-span-4 flex flex-col gap-4">
+          <Accordion id="input" title="Input Stream" icon={ImageIcon} openSections={openSections} toggleSection={toggleSection}>
+            <div className={`h-64 border-2 border-dashed rounded-3xl flex items-center justify-center transition-all cursor-pointer relative overflow-hidden bg-gray-950/40 ${!image ? 'border-gray-800 hover:border-indigo-500/50' : 'border-indigo-500/30'}`} onClick={() => document.getElementById('va-upload')?.click()}>
+              <input id="va-upload" type="file" className="hidden" accept="image/*" onChange={e => e.target.files?.[0] && handleFile(e.target.files[0])} />
+              {image ? (
+                <>
+                  <img src={image.url} className="w-full h-full object-contain p-2 relative z-10" alt="Source" />
+                  {status === AnalysisStatus.PENDING && <div className="scanning-line z-20"></div>}
+                  <div className="absolute inset-0 bg-black/20 z-0"></div>
+                </>
+              ) : (
+                <div className="text-center opacity-30"><UploadIcon className="h-12 w-12 mx-auto mb-3 text-indigo-400" /><p className="text-xs font-black uppercase tracking-widest">Load Source Bitstream</p></div>
+              )}
+            </div>
+          </Accordion>
+
+          <div className="va-card rounded-2xl overflow-hidden border border-white/10 bg-black/60 p-4 h-48 overflow-y-auto custom-scrollbar font-mono text-[10px] text-emerald-500/80 space-y-1.5 shadow-inner">
+            <p className="opacity-40 italic mb-2">// NODE LOG SESSION START</p>
+            {logs.map((log, i) => <div key={i}>{log}</div>) || <div className="opacity-20 italic">Awaiting protocol...</div>}
+            <div ref={logEndRef} />
+          </div>
+        </div>
+
+        <div className="lg:col-span-8">
+          <Accordion id="tuning" title="Neural Adjustments" icon={PaletteIcon} openSections={openSections} toggleSection={toggleSection}>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 py-2">
+              <div className="space-y-6">
+                <div className="space-y-3">
+                  <label className="text-xs font-black text-gray-500 uppercase tracking-widest px-1">Context Injection</label>
+                  <textarea value={tuning.keywords} onChange={e => setTuning({...tuning, keywords: e.target.value})} placeholder="Keywords for injection..." className="w-full bg-black/40 border border-white/10 rounded-xl p-4 text-sm text-indigo-300 font-mono resize-none outline-none focus:border-indigo-500/50 h-32 shadow-inner" />
+                </div>
+                <div className="space-y-3">
+                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest px-1 block">Weather Shade Injection</label>
+                  <div className="flex flex-wrap gap-2 px-1">
+                    {WEATHER_SHADES.map(s => (
+                      <button 
+                        key={s.name} 
+                        onClick={() => setTuning({...tuning, adjustments: {...tuning.adjustments, weatherShade: s.color}})}
+                        className={`w-8 h-8 rounded-full border-2 transition-all relative group ${tuning.adjustments.weatherShade === s.color ? 'border-white scale-110 shadow-[0_0_10px_rgba(255,255,255,0.4)]' : 'border-transparent opacity-50 hover:opacity-100'}`}
+                        style={{ backgroundColor: s.color === 'transparent' ? 'transparent' : s.color }}
+                        title={s.name}
+                      >
+                        {s.color === 'transparent' && <div className="absolute inset-0 bg-[linear-gradient(45deg,transparent_45%,red_45%,red_55%,transparent_55%)]"></div>}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-6">
+                <ComboboxField 
+                  label="Style Bias" 
+                  value={tuning.artisticStylePreference} 
+                  options={tuning.customStyleList || []} 
+                  onSelect={(opt: string) => setTuning({...tuning, artisticStylePreference: opt})}
+                  onAdd={(v: string) => v && !(tuning.customStyleList || []).includes(v) && setTuning({...tuning, customStyleList: [...(tuning.customStyleList || []), v]})}
+                  onRemove={(v: string) => setTuning({...tuning, customStyleList: (tuning.customStyleList || []).filter(s => s !== v)})}
+                />
+                <ComboboxField 
+                  label="Atmosphere Seed" 
+                  value={tuning.adjustments.atmosphere} 
+                  options={tuning.customAtmosphereList || []} 
+                  onSelect={(opt: string) => setTuning({...tuning, adjustments: {...tuning.adjustments, atmosphere: opt}})}
+                  onAdd={(v: string) => v && !(tuning.customAtmosphereList || []).includes(v) && setTuning({...tuning, customAtmosphereList: [...(tuning.customAtmosphereList || []), v]})}
+                  onRemove={(v: string) => setTuning({...tuning, customAtmosphereList: (tuning.customAtmosphereList || []).filter(s => s !== v)})}
+                />
+                <div className="space-y-5 pt-4 border-t border-white/5">
+                   <ImpactGauge label="Lighting Intensity" value={tuning.adjustments.lightingIntensity} min={0} max={200} onChange={(v: number) => setTuning({...tuning, adjustments: {...tuning.adjustments, lightingIntensity: v}})} />
+                   <ImpactGauge label="Pose Integrity" value={tuning.adjustments.poseRigidity} min={0} max={100} onChange={(v: number) => setTuning({...tuning, adjustments: {...tuning.adjustments, poseRigidity: v}})} />
+                </div>
+              </div>
+            </div>
+          </Accordion>
+        </div>
+      </div>
+
+      {/* Expansive Results View (Width under 'Copy All') */}
+      <div className="col-span-12">
+        {!result ? (
+          <div className="va-card min-h-[400px] flex flex-col items-center justify-center text-center p-20 opacity-10 grayscale border-dashed border-2 border-indigo-500/20 rounded-[3rem]">
+            <TargetIcon className="h-32 w-32 mb-8 text-white animate-pulse" />
+            <h3 className="text-4xl font-black uppercase tracking-[0.5em] text-white">Logic Idle</h3>
+            <p className="text-sm font-black uppercase tracking-widest mt-6">Awaiting bitstream for forensic analysis</p>
+          </div>
+        ) : (
+          <div className="animate-in fade-in slide-in-from-bottom-4 duration-700 space-y-6">
+            <div className="flex items-center justify-between p-4 bg-gray-900/40 rounded-[1.5rem] border border-white/10">
+              <div className="flex items-center gap-3">
+                <button 
+                  onClick={handleCopyAll}
+                  className="px-8 py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-[11px] font-black uppercase tracking-widest transition-all flex items-center gap-2 shadow-lg"
+                >
+                  {copiedId === 'copy-all' ? <CheckIcon className="h-4 w-4" /> : <DuplicateIcon className="h-4 w-4" />}
+                  Copy Raw Technical Data
+                </button>
+              </div>
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={handleResetCanvas}
+                  className="p-2 bg-white/5 hover:bg-red-600/20 text-gray-500 hover:text-red-500 rounded-lg transition-all border border-white/5"
+                  title="Wipe Canvas"
+                >
+                  <RefreshIcon className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+
+            <Accordion id="results-foundation" title="Architectural Foundation" icon={BoxIcon} openSections={openSections} toggleSection={toggleSection} compact>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-2 pb-6">
+                <EditableField label="Composition Map" value={result.compositionDescriptor} onChange={(v: string) => handleResultChange('compositionDescriptor', v)} onCopy={() => copyField(result.compositionDescriptor, 'comp')} active={activeToggles.composition} onToggle={() => setActiveToggles(p => ({...p, composition: !p.composition}))} />
+                <EditableField label="Artistic Logic" value={result.artisticStyle} onChange={(v: string) => handleResultChange('artisticStyle', v)} onCopy={() => copyField(result.artisticStyle, 'style')} active={activeToggles.style} onToggle={() => setActiveToggles(p => ({...p, style: !p.style}))} />
+                <EditableField label="Lighting Protocol" value={result.lightingIllumination} onChange={(v: string) => handleResultChange('lightingIllumination', v)} onCopy={() => copyField(result.lightingIllumination, 'light')} active={activeToggles.lighting} onToggle={() => setActiveToggles(p => ({...p, lighting: !p.lighting}))} />
+                <EditableField label="Execution Method" value={result.technique} onChange={(v: string) => handleResultChange('technique', v)} onCopy={() => copyField(result.technique, 'tech')} active={activeToggles.technique} onToggle={() => setActiveToggles(p => ({...p, technique: !p.technique}))} />
+                <EditableField label="Color Calibration" value={result.colorGamma} onChange={(v: string) => handleResultChange('colorGamma', v)} onCopy={() => copyField(result.colorGamma, 'color')} active={activeToggles.colors} onToggle={() => setActiveToggles(p => ({...p, colors: !p.colors}))} />
+                <div className="pt-3">
+                  <span className="text-[11px] font-black text-indigo-500/60 uppercase tracking-[0.2em] px-1">Suggested Artists</span>
+                  <div className="flex flex-wrap gap-2.5 mt-3">
+                      {(result.suggestedArtists || []).map((a, i) => <span key={i} className="px-4 py-1.5 bg-indigo-900/30 text-indigo-400 text-xs font-black rounded-lg uppercase border border-indigo-500/20">{a}</span>)}
+                  </div>
+                </div>
+              </div>
+            </Accordion>
+            
+            <Accordion id="results-subject" title="Subject & Anatomy" icon={UserIcon} openSections={openSections} toggleSection={toggleSection} compact>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-2 pb-6">
+                  <EditableField label="Pose Detail" value={result.poseDescriptor} onChange={(v: string) => handleResultChange('poseDescriptor', v)} onCopy={() => copyField(result.poseDescriptor, 'pose')} active={activeToggles.pose} onToggle={() => setActiveToggles(p => ({...p, pose: !p.pose}))} />
+                  <EditableField label="Kinetic State" value={result.actionPoseIdentifier} onChange={(v: string) => handleResultChange('actionPoseIdentifier', v)} onCopy={() => copyField(result.actionPoseIdentifier, 'kinetic')} active={activeToggles.kinetic} onToggle={() => setActiveToggles(p => ({...p, kinetic: !p.kinetic}))} />
+                  <EditableField label="Attire Archetype" value={result.appearanceRegistry?.attire} onChange={(v: string) => handleResultChange('appearanceRegistry.attire', v)} onCopy={() => copyField(result.appearanceRegistry?.attire, 'attire')} active={activeToggles.attire} onToggle={() => setActiveToggles(p => ({...p, attire: !p.attire}))} />
+                  <EditableField label="Grooming Specs" value={result.appearanceRegistry?.haircutStyle} onChange={(v: string) => handleResultChange('appearanceRegistry.haircutStyle', v)} onCopy={() => copyField(result.appearanceRegistry?.haircutStyle, 'hair')} active={activeToggles.hair} onToggle={() => setActiveToggles(p => ({...p, hair: !p.hair}))} />
+                <div className="pt-3 md:col-span-2">
+                  <span className="text-[11px] font-black text-indigo-500/60 uppercase tracking-[0.2em] px-1">Accessory Registry</span>
+                  <div className="flex flex-wrap gap-2.5 mt-3">
+                      {(result.appearanceRegistry?.accessories || []).map((acc, i) => <span key={i} className="px-4 py-1.5 bg-gray-800 text-gray-400 text-xs font-black rounded-lg uppercase border border-white/5">{acc}</span>)}
+                  </div>
+                </div>
+              </div>
+            </Accordion>
+            
+            <Accordion id="results-synthesis" title="Generation Blueprint" icon={SparklesIcon} openSections={openSections} toggleSection={toggleSection} compact>
+              <div className="space-y-6 pb-6">
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                  {Object.entries(result.modifierTuning || {}).map(([key, val]) => (
+                    <div key={key} className="bg-black/40 p-4 rounded-xl border border-white/5 flex flex-col shadow-inner"><span className="text-[10px] font-black text-gray-600 uppercase truncate mb-1.5">{key.replace(/([A-Z])/g, ' $1')}</span><span className="text-xs text-indigo-400 font-bold truncate">{val as string}</span></div>
+                  ))}
+                </div>
+                <div className={`relative group transition-opacity ${activeToggles.synthesis ? 'opacity-100' : 'opacity-40'}`}>
+                  <div className="flex items-center gap-4 mb-4 px-1"><span className="text-xs font-black text-emerald-500/70 uppercase tracking-[0.3em]">Master Generation Prompt</span><LogicToggle active={activeToggles.synthesis} onChange={() => setActiveToggles(p => ({...p, synthesis: !p.synthesis}))} /></div>
+                  <textarea disabled={!activeToggles.synthesis} value={result.tunedPromptPreview} onChange={(e) => handleResultChange('tunedPromptPreview', e.target.value)} className="w-full bg-indigo-600/5 border border-indigo-500/20 rounded-2xl p-8 text-sm text-white font-mono italic leading-relaxed outline-none focus:border-indigo-500 shadow-[inset_0_0_40px_rgba(99,102,241,0.1)] h-56 resize-none" />
+                  <button onClick={() => copyField(result.tunedPromptPreview || '', 'prompt')} className="absolute bottom-6 right-6 p-5 bg-indigo-600 text-white rounded-2xl shadow-2xl opacity-0 group-hover:opacity-100 active:scale-95 transition-all hover:bg-indigo-500">
+                    {copiedId === 'prompt' ? <CheckIcon className="h-6 w-6" /> : <CopyIcon className="h-6 w-6" />}
+                  </button>
+                </div>
+              </div>
+            </Accordion>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 };
 
 export default ImageAnalyzer;

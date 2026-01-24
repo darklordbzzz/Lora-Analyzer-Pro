@@ -1,24 +1,26 @@
 
 import React, { useState } from 'react';
-import { SoundStudioState, LLMModel } from '../types';
+import { SoundStudioState, LLMModel, AnalyzerTuningConfig } from '../types';
 import { 
     BoxIcon, AudioIcon, LoaderIcon, RobotIcon, SparklesIcon, ChevronDownIcon 
 } from './Icons';
 import { composeMusicComposition } from '../services/llmService';
 import * as vlm from '../services/vlmService';
 
+// Added AnalyzerTuningConfig to props to fix assignability errors in App.tsx
 interface SoundStudioProps {
     initialState: SoundStudioState | null;
     activeModel?: LLMModel;
+    tuning: AnalyzerTuningConfig;
 }
 
 const GENRES = ["Synthwave", "EDM", "Techno", "Cinematic", "Lofi", "Phonk", "Pop", "Rock", "Hip Hop"];
 
-const SoundStudio: React.FC<SoundStudioProps> = ({ initialState, activeModel }) => {
+const SoundStudio: React.FC<SoundStudioProps> = ({ initialState, activeModel, tuning }) => {
+    // Removed 'album' property to match SoundStudioState interface and fix type error
     const [state, setState] = useState<SoundStudioState>(initialState || {
         title: 'New Track',
         artist: 'Various Artists',
-        album: 'Studio Session',
         genre: 'Synthwave',
         bpm: 120,
         key: 'C Major',

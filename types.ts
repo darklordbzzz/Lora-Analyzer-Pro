@@ -1,87 +1,9 @@
 
 export enum AnalysisStatus {
+  IDLE = 'IDLE',
   PENDING = 'PENDING',
   COMPLETED = 'COMPLETED',
   FAILED = 'FAILED',
-}
-
-export interface LoraFileWithPreview {
-  id: string;
-  lora: File;
-  preview: File | null;
-  metadata: string;
-  hash?: string;
-  relativePath: string;
-  civitaiUrl?: string;
-  huggingfaceUrl?: string;
-  tensorArtUrl?: string;
-  seaartUrl?: string;
-  customUrls?: Record<string, string>;
-}
-
-export interface LoraAnalysis {
-  id: string;
-  status: AnalysisStatus;
-  fileName: string;
-  fileSizeMB: number;
-  previewImageUrl?: string;
-  modelType?: string;
-  modelFamily?: string;
-  baseModel?: string;
-  triggerWords?: string[];
-  usageTips?: string[];
-  tags?: string[];
-  confidence?: number;
-  error?: string;
-  timestamp?: number;
-  trainingInfo?: Record<string, any>;
-  hash?: string;
-}
-
-export type AppView = 'models' | 'images' | 'video' | 'audio' | 'chat' | 'studio' | 'help';
-export type ImageSubView = 'studio' | 'analyzer' | 'retouch' | 'inpaint';
-
-export interface ChatMessage {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  timestamp: number;
-  attachments?: { name: string; mimeType: string; data: string }[];
-}
-
-export interface AudioAnalysisResult {
-  title: string;
-  artist: string;
-  genre: string;
-  bpm: number;
-  key: string;
-  mood: string;
-  instrumentation: string[];
-  lyrics: string;
-}
-
-export interface SoundStudioState extends AudioAnalysisResult {
-    isInstrumental: boolean;
-    vocalStyle: string;
-    description: string;
-    album?: string;
-}
-
-export type LLMProvider = 'gemini' | 'openai' | 'ollama' | 'custom-api' | 'integrated-core' | 'huggingface';
-
-export interface CustomHeader {
-  key: string;
-  value: string;
-}
-
-export interface LLMModel {
-  id: string;
-  name: string;
-  provider: LLMProvider;
-  modelName: string;
-  apiUrl?: string;
-  apiKey?: string;
-  customHeaders?: CustomHeader[];
 }
 
 export interface ImageAnalysisResult {
@@ -98,6 +20,13 @@ export interface ImageAnalysisResult {
     haircutStyle: string;
     accessories: string[];
   };
+  modifierTuning?: {
+    colorTemperatureAdjustment: string;
+    lightingIntensity: string;
+    weatherOverlay: string;
+    poseRigidity: string;
+    styleInfluenceWeight: string;
+  };
   tunedPromptPreview?: string;
 }
 
@@ -105,15 +34,108 @@ export interface AnalyzerTuningConfig {
   keywords: string;
   deepPoseAudit: boolean;
   appearanceAudit: boolean;
+  unrestrictedNeuralUplink: boolean;
   artisticStylePreference: string;
   colorFilterPreference: string;
+  customColorShade: string;
+  customStyleList: string[];
+  customAtmosphereList: string[];
+  downloadFolderPath?: string;
   adjustments: {
-    colorTemperature: number; // -100 to 100
+    colorTemperature: number;
     lightingIntensity: number;
-    weatherCondition: string;
+    atmosphere: string;
     poseRigidity: number;
     styleWeight: number;
+    weatherCondition: string;
+    weatherShade?: string;
   };
+}
+
+export interface VaultEntry {
+  id: string;
+  timestamp: string;
+  fileName: string;
+  result: ImageAnalysisResult;
+  config: AnalyzerTuningConfig;
+  sourceImageBase64?: string;
+  version: string;
+}
+
+export type AppView = 
+  | 'lora' 
+  | 'chat' 
+  | 'vision-auditor'
+  | 'studio-image' 
+  | 'studio-video'
+  | 'studio-sound' 
+  | 'live-session'
+  | 'metadata-image' 
+  | 'metadata-video' 
+  | 'metadata-audio' 
+  | 'retouch' 
+  | 'inpaint' 
+  | 'vault' 
+  | 'setup' 
+  | 'help';
+
+export type LLMProvider = 'gemini' | 'openai' | 'ollama' | 'integrated-core' | 'huggingface';
+
+export interface LLMModel {
+  id: string;
+  name: string;
+  provider: LLMProvider;
+  modelName: string;
+  apiUrl?: string;
+  apiKey?: string;
+}
+
+export interface ActiveLora {
+  id: string;
+  fileName: string;
+  triggerWords: string[];
+  weight: number;
+  baseModel?: string;
+}
+
+export interface LoraFileWithPreview {
+  lora: File;
+  preview: File | null;
+  metadata: string;
+  id: string;
+  hash?: string;
+  relativePath: string;
+}
+
+export interface LoraAnalysis {
+  id: string;
+  fileName: string;
+  fileSizeMB: string;
+  status: AnalysisStatus;
+  modelType?: string;
+  modelFamily?: string;
+  baseModel?: string;
+  triggerWords?: string[];
+  trainingInfo?: Record<string, any>;
+  usageTips?: string[];
+  tags?: string[];
+  confidence?: number;
+  previewImageUrl?: string;
+  hash?: string;
+}
+
+export interface SoundStudioState {
+  title: string;
+  artist: string;
+  genre: string;
+  bpm: number;
+  key: string;
+  mood: string;
+  instrumentation: string[];
+  lyrics: string;
+  description: string;
+  isInstrumental: boolean;
+  vocalStyle: string;
 }
 
 export interface InpaintRegion {
@@ -125,72 +147,70 @@ export interface InpaintRegion {
   tag: string;
 }
 
-export interface ImageStudioState {
-  prompt: string;
-  aspectRatio: "1:1" | "3:4" | "4:3" | "9:16" | "16:9";
-  imageSize: "1K" | "2K" | "4K";
-  quality: "standard" | "high";
-  provider?: 'gemini' | 'local';
+export interface CustomHeader {
+  key: string;
+  value: string;
 }
 
-/**
- * Interface for custom platform integrations.
- */
 export interface CustomIntegration {
+  id: string;
   name: string;
   baseUrl: string;
 }
 
-/**
- * Interface for an audio processing node.
- */
-export interface AudioEngineNode {
-  id: string;
-  name: string;
-  provider: string;
-  modelName: string;
-  apiKey?: string;
-  type: string;
-}
-
-/**
- * Metadata details for an Ollama model.
- */
-export interface OllamaModelDetails {
-  parent_model: string;
-  format: string;
-  family: string;
-  families: string[];
-  parameter_size: string;
-  quantization_level: string;
-}
-
-/**
- * Entry structure for a locally installed Ollama model.
- */
 export interface OllamaModelEntry {
   name: string;
-  model: string;
   modified_at: string;
   size: number;
   digest: string;
-  details: OllamaModelDetails;
+  details: {
+    format: string;
+    family: string;
+    families: string[] | null;
+    parameter_size: string;
+    quantization_level: string;
+  };
 }
 
-/**
- * Response structure from Ollama's /api/tags endpoint.
- */
 export interface OllamaTagsResponse {
   models: OllamaModelEntry[];
 }
 
-/**
- * Progress updates from Ollama's /api/pull endpoint.
- */
 export interface OllamaPullProgress {
   status: string;
   digest?: string;
   total?: number;
   completed?: number;
-  error?: string;
+}
+
+export interface ChatMessage {
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  attachments?: { data: string; mimeType: string }[];
+}
+
+export interface AudioAnalysisResult {
+  title: string;
+  artist: string;
+  genre: string;
+  bpm: number;
+  key: string;
+  mood: string;
+  instrumentation: string[];
+  lyrics: string;
+}
+
+export interface AudioEngineNode {
+  id: string;
+  name: string;
+  provider: LLMProvider;
+  modelName: string;
+  apiKey?: string;
+  type: 'synthesis' | 'analysis';
+}
+
+export interface ImageStudioState {
+  prompt: string;
+  aspectRatio: string;
+  provider: 'gemini' | 'local';
 }

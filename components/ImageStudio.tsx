@@ -1,9 +1,16 @@
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import * as gemini from '../services/geminiService';
-import { LoaderIcon, SparklesIcon, DownloadIcon, RefreshIcon, BoxIcon } from './Icons';
+import { LoaderIcon, SparklesIcon, DownloadIcon, RefreshIcon, BoxIcon, XIcon, TargetIcon } from './Icons';
+import { ActiveLora, AnalyzerTuningConfig } from '../types';
 
-const ImageStudio: React.FC = () => {
+interface ImageStudioProps {
+  activeLoras?: ActiveLora[];
+  setActiveLoras?: React.Dispatch<React.SetStateAction<ActiveLora[]>>;
+  tuning: AnalyzerTuningConfig;
+}
+
+const ImageStudio: React.FC<ImageStudioProps> = ({ activeLoras = [], setActiveLoras, tuning }) => {
   const [prompt, setPrompt] = useState('');
   const [aspectRatio, setAspectRatio] = useState('1:1');
   const [isGenerating, setIsGenerating] = useState(false);
@@ -13,8 +20,22 @@ const ImageStudio: React.FC = () => {
     if (!prompt.trim()) return;
     setIsGenerating(true);
     setResultUrl(null);
+
+    // Prompt augmentation with active LoRAs
+    let finalPrompt = prompt;
+    if (activeLoras.length > 0) {
+      const triggers = activeLoras.flatMap(l => l.triggerWords).filter(Boolean).join(', ');
+      if (triggers) {
+        finalPrompt = `${triggers}, ${prompt}`;
+      }
+    }
+
     try {
-      const url = await gemini.generateImage({ prompt, aspectRatio });
+      const url = await gemini.generateImage({ 
+        prompt: finalPrompt, 
+        aspectRatio, 
+        unrestricted: tuning.unrestrictedNeuralUplink 
+      });
       setResultUrl(url);
     } catch (e: any) {
       alert(`Synthesis Failed: ${e.message}`);
@@ -23,9 +44,51 @@ const ImageStudio: React.FC = () => {
     }
   };
 
+  const removeActiveLora = (id: string) => {
+    setActiveLoras?.(prev => prev.filter(l => l.id !== id));
+  };
+
+  const updateLoraWeight = (id: string, weight: number) => {
+    setActiveLoras?.(prev => prev.map(l => l.id === id ? { ...l, weight } : l));
+  };
+
   return (
     <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-8 h-full animate-in fade-in duration-700">
       <div className="lg:col-span-4 xl:col-span-3 space-y-6">
+        {/* Active Synapse Injection Tray */}
+        {activeLoras.length > 0 && (
+          <div className="glass-card p-6 rounded-[2.5rem] border border-hub-accent/30 space-y-4 shadow-xl animate-in slide-in-from-top-4">
+            <div className="flex items-center justify-between px-1">
+              <label className="text-[10px] font-black text-hub-accent uppercase tracking-[0.4em] flex items-center gap-2">
+                <TargetIcon className="h-4 w-4" /> Active Synapse
+              </label>
+              <span className="text-[8px] bg-hub-accent/10 text-hub-accent px-2 py-0.5 rounded font-black">{activeLoras.length} Loaded</span>
+            </div>
+            <div className="space-y-3">
+              {activeLoras.map(lora => (
+                <div key={lora.id} className="p-4 bg-gray-950/60 rounded-2xl border border-white/5 space-y-3">
+                  <div className="flex justify-between items-center">
+                    <span className="text-[10px] font-black text-gray-300 truncate max-w-[120px] uppercase tracking-tighter" title={lora.fileName}>
+                      {lora.fileName.split(/[\\/]/).pop()}
+                    </span>
+                    <button onClick={() => removeActiveLora(lora.id)} className="text-gray-600 hover:text-red-500 transition-colors">
+                      <XIcon className="h-3 w-3" />
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-3">
+                     <input 
+                        type="range" min="0" max="2" step="0.1" value={lora.weight} 
+                        onChange={e => updateLoraWeight(lora.id, parseFloat(e.target.value))}
+                        className="flex-grow h-1 bg-gray-800 rounded-full appearance-none cursor-pointer accent-hub-accent"
+                     />
+                     <span className="text-[9px] font-mono text-hub-accent w-6">{lora.weight.toFixed(1)}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div className="glass-card p-8 rounded-[3rem] border border-white/5 space-y-8 shadow-2xl relative overflow-hidden">
           <div className="scanning-line opacity-10"></div>
           
@@ -67,16 +130,6 @@ const ImageStudio: React.FC = () => {
             {isGenerating ? <LoaderIcon className="h-5 w-5 animate-spin" /> : <SparklesIcon className="h-5 w-5" />}
             {isGenerating ? 'Synthesizing...' : 'Execute Genesis'}
           </button>
-        </div>
-        
-        <div className="p-6 bg-hub-cyan/5 border border-hub-cyan/20 rounded-3xl flex items-center gap-4">
-            <div className="p-3 bg-hub-cyan/10 rounded-xl">
-                <BoxIcon className="h-5 w-5 text-hub-cyan" />
-            </div>
-            <div>
-                <p className="text-[10px] font-black text-white uppercase tracking-widest">Free Tier Optimized</p>
-                <p className="text-[8px] font-bold text-hub-cyan uppercase tracking-widest opacity-60">High-Speed Flash Inference</p>
-            </div>
         </div>
       </div>
 

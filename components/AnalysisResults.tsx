@@ -1,6 +1,6 @@
 
 import React from 'react';
-import type { LoraAnalysis, LLMModel } from '../types';
+import type { LoraAnalysis, LLMModel, ActiveLora } from '../types';
 import LoraCard from './LoraCard';
 
 interface AnalysisResultsProps {
@@ -9,9 +9,13 @@ interface AnalysisResultsProps {
   onRetry: (result: LoraAnalysis) => void;
   canRetry: (result: LoraAnalysis) => boolean;
   activeModel?: LLMModel;
+  activeLoras?: ActiveLora[];
+  onToggleInjection?: (lora: LoraAnalysis) => void;
 }
 
-const AnalysisResults: React.FC<AnalysisResultsProps> = ({ results = [], onDelete, onRetry, canRetry, activeModel }) => {
+const AnalysisResults: React.FC<AnalysisResultsProps> = ({ 
+  results = [], onDelete, onRetry, canRetry, activeModel, activeLoras = [], onToggleInjection 
+}) => {
   if (!results || results.length === 0) {
     return null;
   }
@@ -26,6 +30,8 @@ const AnalysisResults: React.FC<AnalysisResultsProps> = ({ results = [], onDelet
             onRetry={() => onRetry(result)}
             canRetry={canRetry(result)}
             activeModel={activeModel}
+            isInjected={!!activeLoras.find(l => l.id === result.id)}
+            onToggleInjection={() => onToggleInjection?.(result)}
         />
       ))}
     </div>

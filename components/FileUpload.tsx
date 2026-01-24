@@ -23,9 +23,15 @@ export interface FileUploadRef {
 
 type HashStatus = 'idle' | 'hashing' | 'done' | 'error' | 'skipped';
 
+// Added missing URL properties to fix property access errors in handleFetchMetadata
 interface FileListItem extends LoraFileWithPreview {
   hashStatus: HashStatus;
   parseStatus?: 'idle' | 'parsing' | 'done' | 'error';
+  civitaiUrl?: string;
+  huggingfaceUrl?: string;
+  tensorArtUrl?: string;
+  seaartUrl?: string;
+  customUrls?: Record<string, string>;
 }
 
 const SUPPORTED_EXTENSIONS = ".safetensors, .ckpt, .pt, .pth, .bin, .gguf";

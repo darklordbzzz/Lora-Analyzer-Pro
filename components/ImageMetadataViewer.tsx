@@ -7,13 +7,15 @@ import {
 } from './Icons';
 import { extractImageMetadata, ImageMeta } from '../services/imageMetadataService';
 import { analyzeImageWithLLM } from '../services/llmService';
-import { LLMModel, ImageAnalysisResult } from '../types';
+import { LLMModel, ImageAnalysisResult, AnalyzerTuningConfig } from '../types';
 
+// Added AnalyzerTuningConfig to props to fix assignability errors in App.tsx
 interface ImageMetadataViewerProps {
     activeModel?: LLMModel;
+    tuning: AnalyzerTuningConfig;
 }
 
-const ImageMetadataViewer: React.FC<ImageMetadataViewerProps> = ({ activeModel }) => {
+const ImageMetadataViewer: React.FC<ImageMetadataViewerProps> = ({ activeModel, tuning }) => {
     const [image, setImage] = useState<{ file: File; url: string; meta: ImageMeta } | null>(null);
     const [isDragging, setIsDragging] = useState(false);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -37,7 +39,7 @@ const ImageMetadataViewer: React.FC<ImageMetadataViewerProps> = ({ activeModel }
         setResult(null);
         
         try {
-            const data = await analyzeImageWithLLM(image.file, activeModel);
+            const data = await analyzeImageWithLLM(image.file, activeModel, undefined, tuning);
             setResult(data);
         } catch (e: any) {
             setError(e.message);

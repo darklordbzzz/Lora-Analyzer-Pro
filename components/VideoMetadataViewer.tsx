@@ -1,18 +1,20 @@
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { UploadIcon, VideoIcon, XIcon, InfoIcon, LoaderIcon, BoxIcon, XCircleIcon, TerminalIcon, SparklesIcon, PlugIcon, RefreshIcon, LabIcon, ChevronDownIcon, AudioIcon, DownloadIcon, GlobeIcon, LinkIcon, SettingsIcon, CheckCircleIcon, SaveIcon, CropIcon, TargetIcon } from './Icons';
-import { LLMModel } from '../types';
+import { LLMModel, AnalyzerTuningConfig } from '../types';
 import { analyzeVideoSurface, analyzeVideoFrames } from '../services/llmService';
 
+// Added AnalyzerTuningConfig to props to fix assignability errors in App.tsx
 interface VideoMetadataViewerProps {
     activeModel?: LLMModel;
+    tuning: AnalyzerTuningConfig;
 }
 
 interface CropRegion {
     x: number; y: number; w: number; h: number;
 }
 
-const VideoMetadataViewer: React.FC<VideoMetadataViewerProps> = ({ activeModel }) => {
+const VideoMetadataViewer: React.FC<VideoMetadataViewerProps> = ({ activeModel, tuning }) => {
     const [video, setVideo] = useState<{ file: File | null; url: string; duration: number; width: number; height: number; size: number; isTainted?: boolean; isLive?: boolean }> (null as any);
     const [isDragging, setIsDragging] = useState(false);
     const [isCapturing, setIsCapturing] = useState(false);
